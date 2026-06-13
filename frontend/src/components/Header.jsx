@@ -6,29 +6,31 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { Sparkles, CalendarCheck, LogOut, User as UserIcon } from "lucide-react";
+import { Flame, CalendarCheck, LogOut, User as UserIcon } from "lucide-react";
 
 export default function Header() {
   const { user, login, logout } = useAuth();
   const navigate = useNavigate();
 
   return (
-    <header className="sticky top-0 z-40 glass-nav border-b border-stone-200/70">
+    <header className="sticky top-0 z-40 glass-nav border-b border-zinc-900/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        <Link to="/" data-testid="logo-link" className="flex items-center gap-2 group">
-          <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-800 text-white">
-            <Sparkles className="h-5 w-5" />
+        <Link to="/" data-testid="logo-link" className="flex items-center gap-2.5 group">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-red-600 text-white shadow-[0_0_20px_rgba(220,38,38,0.5)]">
+            <Flame className="h-5 w-5" />
           </span>
           <div className="leading-tight">
-            <div className="font-display text-lg font-semibold tracking-tight text-stone-900">Oásis Rio</div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-emerald-700 -mt-0.5">Massagem · RJ</div>
+            <div className="font-display text-lg font-semibold tracking-tight text-zinc-50">
+              Prime <span className="text-red-500">Encontros</span>
+            </div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-red-500/80 -mt-0.5">Massagem Premium · RJ</div>
           </div>
         </Link>
 
-        <nav className="hidden md:flex items-center gap-7 text-sm text-stone-700">
-          <Link to="/" className="hover:text-emerald-800 transition-colors" data-testid="nav-explore">Explorar</Link>
+        <nav className="hidden md:flex items-center gap-7 text-sm text-zinc-300">
+          <Link to="/" className="hover:text-red-500 transition-colors" data-testid="nav-explore">Explorar</Link>
           {user && (
-            <Link to="/minhas-reservas" className="hover:text-emerald-800 transition-colors" data-testid="nav-bookings">
+            <Link to="/minhas-reservas" className="hover:text-red-500 transition-colors" data-testid="nav-bookings">
               Minhas reservas
             </Link>
           )}
@@ -39,32 +41,32 @@ export default function Header() {
             <Button
               data-testid="google-login-button"
               onClick={login}
-              className="rounded-full bg-stone-900 hover:bg-stone-800 text-white px-5"
+              className="rounded-full bg-red-600 hover:bg-red-700 text-white px-5 shadow-lg shadow-red-600/20"
             >
               Entrar com Google
             </Button>
           ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button data-testid="user-menu-trigger" className="flex items-center gap-2 rounded-full pl-1 pr-3 py-1 hover:bg-stone-100 transition-colors">
-                  <Avatar className="h-8 w-8">
+                <button data-testid="user-menu-trigger" className="flex items-center gap-2 rounded-full pl-1 pr-3 py-1 hover:bg-zinc-900 transition-colors">
+                  <Avatar className="h-8 w-8 ring-1 ring-red-500/30">
                     <AvatarImage src={user.picture} alt={user.name} />
-                    <AvatarFallback>{user.name?.[0] || "U"}</AvatarFallback>
+                    <AvatarFallback className="bg-zinc-900 text-zinc-200">{user.name?.[0] || "U"}</AvatarFallback>
                   </Avatar>
-                  <span className="hidden sm:inline text-sm font-medium text-stone-800">{user.name?.split(" ")[0]}</span>
+                  <span className="hidden sm:inline text-sm font-medium text-zinc-200">{user.name?.split(" ")[0]}</span>
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel className="text-xs text-stone-500">{user.email}</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem data-testid="menu-my-bookings" onClick={() => navigate("/minhas-reservas")}>
+              <DropdownMenuContent align="end" className="w-56 bg-zinc-950 border-zinc-800 text-zinc-200">
+                <DropdownMenuLabel className="text-xs text-zinc-500">{user.email}</DropdownMenuLabel>
+                <DropdownMenuSeparator className="bg-zinc-800" />
+                <DropdownMenuItem data-testid="menu-my-bookings" onClick={() => navigate("/minhas-reservas")} className="focus:bg-zinc-900 focus:text-red-400">
                   <CalendarCheck className="h-4 w-4 mr-2" /> Minhas reservas
                 </DropdownMenuItem>
                 <DropdownMenuItem data-testid="menu-profile" disabled>
                   <UserIcon className="h-4 w-4 mr-2" /> Meu perfil
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem data-testid="menu-logout" onClick={logout}>
+                <DropdownMenuSeparator className="bg-zinc-800" />
+                <DropdownMenuItem data-testid="menu-logout" onClick={logout} className="focus:bg-zinc-900 focus:text-red-400">
                   <LogOut className="h-4 w-4 mr-2" /> Sair
                 </DropdownMenuItem>
               </DropdownMenuContent>

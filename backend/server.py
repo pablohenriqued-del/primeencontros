@@ -41,7 +41,7 @@ EMERGENT_AUTH_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/o
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Oásis Rio API")
+app = FastAPI(title="Prime Encontros API")
 api = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -278,7 +278,7 @@ async def require_user(
 # ---------------------------------------------------------------------------
 @api.get("/")
 async def root():
-    return {"app": "Oásis Rio", "status": "ok"}
+    return {"app": "Prime Encontros", "status": "ok"}
 
 
 @api.get("/bairros", response_model=List[Bairro])

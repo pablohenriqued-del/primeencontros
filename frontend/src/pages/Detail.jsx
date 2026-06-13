@@ -42,7 +42,7 @@ export default function Detail() {
   }, [id, navigate]);
 
   if (loading || !m) {
-    return <div className="max-w-7xl mx-auto px-4 py-20 text-stone-500">Carregando...</div>;
+    return <div className="max-w-7xl mx-auto px-4 py-20 text-zinc-500">Carregando...</div>;
   }
 
   const priceFor = (d) => d === 60 ? m.price_60 : d === 90 ? m.price_90 : m.price_120;
@@ -81,7 +81,7 @@ export default function Detail() {
 
   return (
     <div data-testid="detail-page" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <Link to="/" className="inline-flex items-center text-sm text-stone-600 hover:text-emerald-800 mb-6">
+      <Link to="/" className="inline-flex items-center text-sm text-zinc-400 hover:text-red-500 mb-6 transition-colors">
         <ChevronLeft className="h-4 w-4 mr-1" /> Voltar
       </Link>
 
@@ -90,29 +90,29 @@ export default function Detail() {
         <div className="lg:col-span-8 space-y-8">
           {/* Bento gallery */}
           <div className="grid grid-cols-4 grid-rows-2 gap-3 h-[320px] sm:h-[460px]">
-            <div className="col-span-4 sm:col-span-2 row-span-2 relative rounded-2xl overflow-hidden bg-stone-100">
+            <div className="col-span-4 sm:col-span-2 row-span-2 relative rounded-2xl overflow-hidden bg-zinc-900">
               <img src={m.gallery[0]} alt={m.name} className="w-full h-full object-cover" />
             </div>
-            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-stone-100">
+            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
               <img src={m.gallery[1]} alt="" className="w-full h-full object-cover" />
             </div>
             <div
               data-testid="open-video-button"
               onClick={() => setVideoOpen(true)}
-              className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-stone-100 relative cursor-pointer group"
+              className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900 relative cursor-pointer group ring-1 ring-red-600/0 hover:ring-red-600/60 transition-all"
             >
-              <img src={m.video_thumb} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-              <div className="absolute inset-0 bg-stone-900/30 flex items-center justify-center">
-                <div className="h-14 w-14 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <Play className="h-6 w-6 text-stone-900 ml-0.5" />
+              <img src={m.video_thumb} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90" />
+              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                <div className="h-14 w-14 rounded-full bg-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(220,38,38,0.6)] group-hover:scale-110 transition-transform">
+                  <Play className="h-6 w-6 text-white ml-0.5" />
                 </div>
               </div>
-              <div className="absolute bottom-2 right-2 text-[10px] uppercase tracking-wider text-white font-semibold bg-stone-900/60 backdrop-blur px-2 py-0.5 rounded-full">Vídeo</div>
+              <div className="absolute bottom-2 right-2 text-[10px] uppercase tracking-wider text-white font-semibold bg-red-600 px-2 py-0.5 rounded-full">Vídeo</div>
             </div>
-            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-stone-100">
+            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
               <img src={m.gallery[2]} alt="" className="w-full h-full object-cover" />
             </div>
-            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-stone-100">
+            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
               <img src={m.gallery[3]} alt="" className="w-full h-full object-cover" />
             </div>
           </div>
@@ -120,46 +120,46 @@ export default function Detail() {
           {/* Header info */}
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-3">
-              <Badge className="bg-emerald-50 text-emerald-800 hover:bg-emerald-50 border-emerald-200 rounded-full">
+              <Badge className="bg-red-600/15 text-red-400 hover:bg-red-600/20 border border-red-600/40 rounded-full">
                 <MapPin className="h-3 w-3 mr-1" /> {m.bairro}
               </Badge>
-              <Badge className="bg-stone-100 text-stone-800 hover:bg-stone-100 rounded-full border-0">
+              <Badge className="bg-zinc-900 text-zinc-300 hover:bg-zinc-900 rounded-full border border-zinc-800">
                 <Award className="h-3 w-3 mr-1" /> {m.experience_years} anos de experiência
               </Badge>
-              <Badge className="bg-stone-100 text-stone-800 hover:bg-stone-100 rounded-full border-0">
+              <Badge className="bg-zinc-900 text-zinc-300 hover:bg-zinc-900 rounded-full border border-zinc-800">
                 <Languages className="h-3 w-3 mr-1" /> {m.languages.join(", ")}
               </Badge>
             </div>
-            <h1 className="font-display text-3xl sm:text-4xl font-medium tracking-tight text-stone-900">{m.name}</h1>
-            <div className="flex items-center gap-3 mt-2 text-stone-700">
+            <h1 className="font-display text-3xl sm:text-4xl font-medium tracking-tight text-zinc-50">{m.name}</h1>
+            <div className="flex items-center gap-3 mt-2 text-zinc-300">
               <div className="flex items-center gap-1">
-                <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
+                <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
                 <span className="font-medium">{m.rating.toFixed(1)}</span>
-                <span className="text-stone-400 text-sm">({m.reviews} avaliações)</span>
+                <span className="text-zinc-500 text-sm">({m.reviews} avaliações)</span>
               </div>
             </div>
           </div>
 
           <Tabs defaultValue="sobre" className="w-full">
-            <TabsList className="bg-stone-100 rounded-full p-1">
-              <TabsTrigger value="sobre" className="rounded-full data-[state=active]:bg-white" data-testid="tab-sobre">Sobre</TabsTrigger>
-              <TabsTrigger value="especialidades" className="rounded-full data-[state=active]:bg-white" data-testid="tab-specs">Especialidades</TabsTrigger>
-              <TabsTrigger value="avaliacoes" className="rounded-full data-[state=active]:bg-white" data-testid="tab-reviews">Avaliações</TabsTrigger>
+            <TabsList className="bg-zinc-950 border border-zinc-900 rounded-full p-1">
+              <TabsTrigger value="sobre" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-sobre">Sobre</TabsTrigger>
+              <TabsTrigger value="especialidades" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-specs">Especialidades</TabsTrigger>
+              <TabsTrigger value="avaliacoes" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-reviews">Avaliações</TabsTrigger>
             </TabsList>
-            <TabsContent value="sobre" className="mt-6 text-stone-700 leading-relaxed">
+            <TabsContent value="sobre" className="mt-6 text-zinc-300 leading-relaxed">
               <p>{m.bio}</p>
             </TabsContent>
             <TabsContent value="especialidades" className="mt-6">
               <div className="flex flex-wrap gap-2">
                 {m.specialties.map((s) => (
-                  <span key={s} className="inline-flex items-center rounded-full bg-emerald-50 text-emerald-800 border border-emerald-100 px-3 py-1.5 text-sm">
+                  <span key={s} className="inline-flex items-center rounded-full bg-red-600/10 text-red-300 border border-red-600/30 px-3 py-1.5 text-sm">
                     <Sparkles className="h-3.5 w-3.5 mr-1.5" /> {s}
                   </span>
                 ))}
               </div>
             </TabsContent>
-            <TabsContent value="avaliacoes" className="mt-6 text-stone-700">
-              <div className="text-sm text-stone-500">
+            <TabsContent value="avaliacoes" className="mt-6 text-zinc-300">
+              <div className="text-sm text-zinc-400">
                 {m.reviews} avaliações com média de {m.rating.toFixed(1)} estrelas. Atendimento pontual, profissional e acolhedor — segundo nossos clientes verificados.
               </div>
             </TabsContent>
@@ -168,11 +168,11 @@ export default function Detail() {
 
         {/* Right: booking widget */}
         <aside className="lg:col-span-4">
-          <div className="lg:sticky lg:top-24 bg-white rounded-2xl border border-stone-100 shadow-sm p-6">
-            <p className="text-xs uppercase tracking-[0.18em] text-emerald-700 font-bold mb-2">Reservar agora</p>
+          <div className="lg:sticky lg:top-24 bg-zinc-950 rounded-2xl border border-zinc-900 shadow-2xl shadow-red-950/20 p-6">
+            <p className="text-xs uppercase tracking-[0.22em] text-red-500 font-bold mb-2">Reservar agora</p>
             <div className="flex items-baseline gap-2 mb-6">
-              <span className="font-display text-3xl font-semibold text-stone-900">{brl(priceFor(duration))}</span>
-              <span className="text-stone-500 text-sm">/ {duration} min</span>
+              <span className="font-display text-3xl font-semibold text-zinc-50">{brl(priceFor(duration))}</span>
+              <span className="text-zinc-500 text-sm">/ {duration} min</span>
             </div>
 
             <div className="space-y-2 mb-5">
@@ -181,13 +181,15 @@ export default function Detail() {
                   key={d}
                   data-testid={`duration-${d}`}
                   onClick={() => setDuration(d)}
-                  className={`w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors text-left
-                    ${duration === d ? "border-emerald-800 bg-emerald-50/50" : "border-stone-200 hover:border-stone-300"}`}
+                  className={`w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-all text-left
+                    ${duration === d
+                      ? "border-red-600 bg-red-600/10 shadow-inner"
+                      : "border-zinc-800 hover:border-zinc-700 bg-black"}`}
                 >
-                  <span className="flex items-center text-sm font-medium text-stone-800">
-                    <Clock className="h-4 w-4 mr-2 text-stone-500" /> {d} minutos
+                  <span className="flex items-center text-sm font-medium text-zinc-200">
+                    <Clock className="h-4 w-4 mr-2 text-zinc-500" /> {d} minutos
                   </span>
-                  <span className="font-semibold text-stone-900">{brl(priceFor(d))}</span>
+                  <span className="font-semibold text-zinc-50">{brl(priceFor(d))}</span>
                 </button>
               ))}
             </div>
@@ -195,11 +197,11 @@ export default function Detail() {
             <Button
               data-testid="open-booking-button"
               onClick={startBooking}
-              className="w-full h-12 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white text-base font-medium"
+              className="w-full h-12 rounded-xl bg-red-600 hover:bg-red-700 text-white text-base font-medium shadow-lg shadow-red-600/25"
             >
               Continuar para agendamento
             </Button>
-            <p className="text-xs text-stone-500 text-center mt-3">
+            <p className="text-xs text-zinc-500 text-center mt-3">
               Pagamento seguro via Stripe · Confirmação imediata
             </p>
           </div>
@@ -208,7 +210,7 @@ export default function Detail() {
 
       {/* Video dialog */}
       <Dialog open={videoOpen} onOpenChange={setVideoOpen}>
-        <DialogContent className="max-w-3xl p-0 overflow-hidden bg-stone-900 border-0">
+        <DialogContent className="max-w-3xl p-0 overflow-hidden bg-black border border-zinc-900">
           <DialogHeader className="sr-only">
             <DialogTitle>Vídeo de {m.name}</DialogTitle>
           </DialogHeader>
@@ -218,27 +220,33 @@ export default function Detail() {
 
       {/* Booking dialog */}
       <Dialog open={bookingOpen} onOpenChange={setBookingOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl bg-zinc-950 border border-zinc-900 text-zinc-100">
           <DialogHeader>
-            <DialogTitle className="font-display text-2xl">Agendar com {m.name}</DialogTitle>
-            <DialogDescription>{duration} min · {brl(priceFor(duration))} · {m.bairro}</DialogDescription>
+            <DialogTitle className="font-display text-2xl text-zinc-50">Agendar com {m.name}</DialogTitle>
+            <DialogDescription className="text-zinc-400">{duration} min · {brl(priceFor(duration))} · {m.bairro}</DialogDescription>
           </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2">
             <div>
-              <Label className="text-xs uppercase tracking-wider text-stone-500">Data</Label>
-              <div className="mt-2 rounded-xl border border-stone-200 flex justify-center" data-testid="booking-calendar">
+              <Label className="text-xs uppercase tracking-wider text-zinc-500">Data</Label>
+              <div className="mt-2 rounded-xl border border-zinc-800 bg-black flex justify-center" data-testid="booking-calendar">
                 <Calendar
                   mode="single"
                   selected={date}
                   onSelect={setDate}
                   disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+                  className="text-zinc-200"
+                  classNames={{
+                    day_selected: "bg-red-600 text-white hover:bg-red-700 focus:bg-red-700",
+                    day_today: "bg-zinc-800 text-red-400",
+                    head_cell: "text-zinc-500 rounded-md w-8 font-normal text-[0.8rem]",
+                  }}
                 />
               </div>
             </div>
             <div className="space-y-5">
               <div>
-                <Label className="text-xs uppercase tracking-wider text-stone-500">Horário</Label>
+                <Label className="text-xs uppercase tracking-wider text-zinc-500">Horário</Label>
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {TIME_SLOTS.map((t) => (
                     <button
@@ -246,7 +254,9 @@ export default function Detail() {
                       data-testid={`slot-${t}`}
                       onClick={() => setTime(t)}
                       className={`rounded-lg py-2 text-sm font-medium border transition-colors
-                        ${time === t ? "bg-emerald-800 border-emerald-800 text-white" : "border-stone-200 text-stone-700 hover:border-stone-300"}`}
+                        ${time === t
+                          ? "bg-red-600 border-red-600 text-white"
+                          : "border-zinc-800 text-zinc-300 hover:border-zinc-700 bg-black"}`}
                     >
                       {t}
                     </button>
@@ -254,20 +264,20 @@ export default function Detail() {
                 </div>
               </div>
               <div>
-                <Label className="text-xs uppercase tracking-wider text-stone-500">Local</Label>
+                <Label className="text-xs uppercase tracking-wider text-zinc-500">Local</Label>
                 <RadioGroup value={locationType} onValueChange={setLocationType} className="mt-2 space-y-2">
-                  <div className="flex items-center gap-2 rounded-xl border border-stone-200 p-3">
-                    <RadioGroupItem value="studio" id="loc-studio" data-testid="loc-studio" />
+                  <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-black p-3">
+                    <RadioGroupItem value="studio" id="loc-studio" data-testid="loc-studio" className="border-zinc-700 text-red-500" />
                     <Label htmlFor="loc-studio" className="flex-1 cursor-pointer">
-                      <div className="text-sm font-medium">No estúdio</div>
-                      <div className="text-xs text-stone-500">{m.bairro} · Rio de Janeiro</div>
+                      <div className="text-sm font-medium text-zinc-100">No estúdio</div>
+                      <div className="text-xs text-zinc-500">{m.bairro} · Rio de Janeiro</div>
                     </Label>
                   </div>
-                  <div className="flex items-center gap-2 rounded-xl border border-stone-200 p-3">
-                    <RadioGroupItem value="home" id="loc-home" data-testid="loc-home" />
+                  <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-black p-3">
+                    <RadioGroupItem value="home" id="loc-home" data-testid="loc-home" className="border-zinc-700 text-red-500" />
                     <Label htmlFor="loc-home" className="flex-1 cursor-pointer">
-                      <div className="text-sm font-medium">Em domicílio</div>
-                      <div className="text-xs text-stone-500">Atendimento no seu endereço</div>
+                      <div className="text-sm font-medium text-zinc-100">Em domicílio</div>
+                      <div className="text-xs text-zinc-500">Atendimento no seu endereço</div>
                     </Label>
                   </div>
                 </RadioGroup>
@@ -277,18 +287,18 @@ export default function Detail() {
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     placeholder="Rua, número, bairro..."
-                    className="mt-2 rounded-xl"
+                    className="mt-2 rounded-xl bg-black border-zinc-800 text-zinc-100 placeholder:text-zinc-600"
                   />
                 )}
               </div>
               <div>
-                <Label className="text-xs uppercase tracking-wider text-stone-500">Observações (opcional)</Label>
+                <Label className="text-xs uppercase tracking-wider text-zinc-500">Observações (opcional)</Label>
                 <Textarea
                   data-testid="booking-notes"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Preferências, alergias, dores..."
-                  className="mt-2 rounded-xl resize-none h-20"
+                  className="mt-2 rounded-xl bg-black border-zinc-800 text-zinc-100 placeholder:text-zinc-600 resize-none h-20"
                 />
               </div>
             </div>
@@ -296,14 +306,14 @@ export default function Detail() {
 
           <DialogFooter className="mt-6">
             <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="text-sm text-stone-700">
-                Total: <span className="font-display text-xl font-semibold text-stone-900 ml-1">{brl(priceFor(duration))}</span>
+              <div className="text-sm text-zinc-300">
+                Total: <span className="font-display text-xl font-semibold text-red-500 ml-1">{brl(priceFor(duration))}</span>
               </div>
               <Button
                 data-testid="checkout-pay-button"
                 onClick={confirmAndPay}
                 disabled={submitting}
-                className="rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white px-6 h-11"
+                className="rounded-xl bg-red-600 hover:bg-red-700 text-white px-6 h-11 shadow-lg shadow-red-600/25"
               >
                 {submitting ? "Redirecionando..." : "Pagar com Stripe"}
               </Button>

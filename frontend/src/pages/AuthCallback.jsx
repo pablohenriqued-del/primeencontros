@@ -34,8 +34,8 @@ export default function AuthCallback() {
   }, [navigate, setUser]);
 
   return (
-    <div className="min-h-[60vh] flex flex-col items-center justify-center text-stone-500">
-      <div className="h-10 w-10 rounded-full border-2 border-emerald-800 border-t-transparent animate-spin mb-4" />
+    <div className="min-h-[60vh] flex flex-col items-center justify-center text-zinc-400">
+      <div className="h-10 w-10 rounded-full border-2 border-red-600 border-t-transparent animate-spin mb-4" />
       Autenticando...
     </div>
   );

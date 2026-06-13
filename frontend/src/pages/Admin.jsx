@@ -16,7 +16,6 @@ import { toast } from "sonner";
 import MediaEditor from "@/components/MediaEditor";
 import AdminProfileEditor from "@/components/AdminProfileEditor";
 import ManualBookingDialog from "@/components/ManualBookingDialog";
-import { brl } from "@/lib/api";
 
 function Pill({ verified }) {
   return verified ? (

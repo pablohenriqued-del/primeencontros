@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api, API_BASE } from "@/lib/api";
+import { extractVideoThumb } from "@/lib/videoThumb";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { Upload, Trash2, Star, Loader2, Image as ImageIcon, Video as VideoIcon, CheckCircle2 } from "lucide-react";
+import { Upload, Trash2, Star, Loader2, Image as ImageIcon, Video as VideoIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 // resolves "/api/files/..." (relative) to absolute backend URL; passes through full URLs
@@ -28,11 +29,12 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated, owne
   if (!m) return null;
 
   const paths = owner
-    ? { photo: `/me/profile/photo`, setMain: `/me/profile/set-main`, video: `/me/profile/video` }
+    ? { photo: `/me/profile/photo`, setMain: `/me/profile/set-main`, video: `/me/profile/video`, videoThumb: `/me/profile/video-thumb` }
     : {
         photo: `/admin/massagistas/${m.id}/photo`,
         setMain: `/admin/massagistas/${m.id}/set-main`,
         video: `/admin/massagistas/${m.id}/video`,
+        videoThumb: `/admin/massagistas/${m.id}/video-thumb`,
       };
 
   const refresh = async () => {
@@ -53,6 +55,15 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated, owne
     try {
       const form = new FormData();
       form.append("file", file);
+      // For video uploads, try to extract a real frame as thumbnail on the client
+      if (kind === "video") {
+        try {
+          const thumbBlob = await extractVideoThumb(file, { atSeconds: 1.0 });
+          if (thumbBlob) {
+            form.append("thumb", thumbBlob, "thumb.jpg");
+          }
+        } catch (_e) { /* thumbnail extraction failed; continue without */ }
+      }
       const path = kind === "photo" ? paths.photo : paths.video;
       const { data } = await api.post(path, form, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -71,6 +82,36 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated, owne
       setProgress(0);
       if (photoInput.current) photoInput.current.value = "";
       if (videoInput.current) videoInput.current.value = "";
+    }
+  };
+
+  const regenerateThumb = async () => {
+    if (!m.video_url) return;
+    setUploading(true);
+    setProgress(0);
+    try {
+      const videoSrc = resolveUrl(m.video_url);
+      const blob = await extractVideoThumb(videoSrc, { atSeconds: 1.0 });
+      if (!blob) {
+        toast.error("Não foi possível extrair frame do vídeo");
+        return;
+      }
+      const form = new FormData();
+      form.append("file", blob, "thumb.jpg");
+      const { data } = await api.post(paths.videoThumb, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+        onUploadProgress: (e) => {
+          if (e.total) setProgress(Math.round((e.loaded / e.total) * 100));
+        },
+      });
+      setM(data.massagista);
+      onUpdated?.(data.massagista);
+      toast.success("Thumbnail atualizada");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Erro ao gerar thumbnail");
+    } finally {
+      setUploading(false);
+      setProgress(0);
     }
   };
 
@@ -172,12 +213,32 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated, owne
 
           <TabsContent value="video" className="mt-5 space-y-4">
             {m.video_url ? (
-              <video
-                src={resolveUrl(m.video_url)}
-                controls
-                className="w-full rounded-xl border border-zinc-800 bg-black aspect-video"
-                data-testid="current-video"
-              />
+              <>
+                <video
+                  src={resolveUrl(m.video_url)}
+                  controls
+                  className="w-full rounded-xl border border-zinc-800 bg-black aspect-video"
+                  data-testid="current-video"
+                />
+                {m.video_thumb && (
+                  <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-black p-3">
+                    <img src={resolveUrl(m.video_thumb)} alt="thumb" className="h-14 w-24 object-cover rounded-md border border-zinc-800" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs uppercase tracking-wider text-zinc-500">Thumbnail atual</div>
+                      <div className="text-xs text-zinc-400 truncate">Imagem mostrada antes de tocar o vídeo</div>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={regenerateThumb}
+                      disabled={uploading}
+                      data-testid="regenerate-thumb-button"
+                      className="rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Gerar do vídeo
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="aspect-video rounded-xl border border-zinc-800 bg-black flex items-center justify-center text-zinc-500 text-sm">
                 Nenhum vídeo configurado

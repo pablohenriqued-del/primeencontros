@@ -10,7 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Star, MapPin, Clock, ChevronLeft, Play, Languages, Award, Sparkles, ShieldCheck, ShieldAlert, MessageCircle } from "lucide-react";
+import { Star, MapPin, Clock, ChevronLeft, ChevronRight, Play, Languages, Award, Sparkles, ShieldCheck, ShieldAlert, MessageCircle, X } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -25,6 +25,7 @@ export default function Detail() {
   const [loading, setLoading] = useState(true);
   const [videoOpen, setVideoOpen] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(-1);
 
   const [duration, setDuration] = useState(60);
   const [date, setDate] = useState();
@@ -43,11 +44,32 @@ export default function Detail() {
     api.get(`/massagistas/${id}/reviews`).then(({ data }) => setReviews(data)).catch(() => {});
   }, [id, navigate]);
 
+  useEffect(() => {
+    if (lightboxIndex < 0 || !m) return;
+    const len = (m.gallery || []).length;
+    const close = () => setLightboxIndex(-1);
+    const prev = () => setLightboxIndex((i) => (i <= 0 ? len - 1 : i - 1));
+    const next = () => setLightboxIndex((i) => (i >= len - 1 ? 0 : i + 1));
+    const onKey = (e) => {
+      if (e.key === "Escape") close();
+      else if (e.key === "ArrowLeft") prev();
+      else if (e.key === "ArrowRight") next();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxIndex, m]);
+
   if (loading || !m) {
     return <div className="max-w-7xl mx-auto px-4 py-20 text-zinc-500">Carregando...</div>;
   }
 
   const priceFor = (d) => d === 60 ? m.price_60 : d === 90 ? m.price_90 : m.price_120;
+
+  const gallery = m.gallery || [];
+  const openLightbox = (i) => setLightboxIndex(i);
+  const closeLightbox = () => setLightboxIndex(-1);
+  const lightboxPrev = () => setLightboxIndex((i) => (i <= 0 ? gallery.length - 1 : i - 1));
+  const lightboxNext = () => setLightboxIndex((i) => (i >= gallery.length - 1 ? 0 : i + 1));
 
   // Video thumbnail with graceful fallback
   const hasVideo = !!m.video_url;
@@ -111,12 +133,22 @@ export default function Detail() {
         <div className="lg:col-span-8 space-y-8">
           {/* Bento gallery */}
           <div className="grid grid-cols-4 grid-rows-2 gap-3 h-[320px] sm:h-[460px]">
-            <div className="col-span-4 sm:col-span-2 row-span-2 relative rounded-2xl overflow-hidden bg-zinc-900">
-              <img src={m.gallery[0]} alt={m.name} className="w-full h-full object-cover" />
-            </div>
-            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
-              {m.gallery?.[1] && <img src={m.gallery[1]} alt="" className="w-full h-full object-cover" />}
-            </div>
+            <button
+              type="button"
+              onClick={() => openLightbox(0)}
+              data-testid="gallery-photo-0"
+              className="col-span-4 sm:col-span-2 row-span-2 relative rounded-2xl overflow-hidden bg-zinc-900 group focus:outline-none focus:ring-2 focus:ring-red-600"
+            >
+              <img src={gallery[0]} alt={m.name} className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-500" />
+            </button>
+            <button
+              type="button"
+              onClick={() => gallery[1] && openLightbox(1)}
+              data-testid="gallery-photo-1"
+              className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900 group focus:outline-none focus:ring-2 focus:ring-red-600"
+            >
+              {gallery[1] && <img src={gallery[1]} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
+            </button>
             {hasVideo ? (
               <div
                 data-testid="open-video-button"
@@ -134,16 +166,36 @@ export default function Detail() {
                 <div className="absolute bottom-2 right-2 text-[10px] uppercase tracking-wider text-white font-semibold bg-red-600 px-2 py-0.5 rounded-full">Vídeo</div>
               </div>
             ) : (
-              <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
-                {m.gallery[2] && <img src={m.gallery[2]} alt="" className="w-full h-full object-cover" />}
-              </div>
+              <button
+                type="button"
+                onClick={() => gallery[2] && openLightbox(2)}
+                data-testid="gallery-photo-2-alt"
+                className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900 group focus:outline-none focus:ring-2 focus:ring-red-600"
+              >
+                {gallery[2] && <img src={gallery[2]} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
+              </button>
             )}
-            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
-              <img src={m.gallery[2]} alt="" className="w-full h-full object-cover" />
-            </div>
-            <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
-              <img src={m.gallery[3]} alt="" className="w-full h-full object-cover" />
-            </div>
+            <button
+              type="button"
+              onClick={() => gallery[2] && openLightbox(2)}
+              data-testid="gallery-photo-2"
+              className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900 group focus:outline-none focus:ring-2 focus:ring-red-600"
+            >
+              {gallery[2] && <img src={gallery[2]} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => gallery[3] && openLightbox(3)}
+              data-testid="gallery-photo-3"
+              className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900 group focus:outline-none focus:ring-2 focus:ring-red-600 relative"
+            >
+              {gallery[3] && <img src={gallery[3]} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
+              {gallery.length > 4 && (
+                <div className="absolute inset-0 bg-black/55 flex items-center justify-center text-white font-display text-lg">
+                  +{gallery.length - 4} fotos
+                </div>
+              )}
+            </button>
           </div>
 
           {/* Header info */}
@@ -350,6 +402,59 @@ export default function Detail() {
             <DialogTitle>Vídeo de {m.name}</DialogTitle>
           </DialogHeader>
           <video src={m.video_url} controls autoPlay className="w-full h-auto" data-testid="profile-video" />
+        </DialogContent>
+      </Dialog>
+
+      {/* Photo lightbox */}
+      <Dialog open={lightboxIndex >= 0} onOpenChange={(v) => !v && closeLightbox()}>
+        <DialogContent className="max-w-5xl p-0 overflow-hidden bg-black border border-zinc-900" data-testid="photo-lightbox">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Foto {lightboxIndex + 1} de {gallery.length}</DialogTitle>
+          </DialogHeader>
+          {lightboxIndex >= 0 && (
+            <div className="relative">
+              <img
+                src={gallery[lightboxIndex]}
+                alt={`${m.name} foto ${lightboxIndex + 1}`}
+                className="w-full max-h-[85vh] object-contain bg-black"
+                data-testid="lightbox-image"
+              />
+              <button
+                type="button"
+                onClick={closeLightbox}
+                aria-label="Fechar"
+                data-testid="lightbox-close"
+                className="absolute top-3 right-3 h-9 w-9 rounded-full bg-black/70 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              {gallery.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={lightboxPrev}
+                    aria-label="Foto anterior"
+                    data-testid="lightbox-prev"
+                    className="absolute top-1/2 -translate-y-1/2 left-3 h-11 w-11 rounded-full bg-black/70 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={lightboxNext}
+                    aria-label="Próxima foto"
+                    data-testid="lightbox-next"
+                    className="absolute top-1/2 -translate-y-1/2 right-3 h-11 w-11 rounded-full bg-black/70 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs text-white/90 bg-black/60 rounded-full px-3 py-1">
+                    {lightboxIndex + 1} / {gallery.length}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

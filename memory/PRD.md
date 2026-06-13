@@ -23,6 +23,13 @@ App estilo iFood para contratação de massagistas no Rio de Janeiro. Funcionali
 - Stripe Checkout (BRL) com transaction idempotente
 - "Minhas reservas" com status (pending_payment/confirmed/cancelled)
 - Login Google (Emergent Auth) com Bearer token persistido em localStorage
+- Painel admin completo (verificação, edição, métricas, reservas manuais)
+- Sistema de avaliações pós-agendamento
+- WhatsApp direto + métricas de clique
+- Upload de fotos/vídeos via Object Storage
+- Mapa Leaflet com geolocalização
+- **Lightbox de fotos** no Detail (clique amplia, prev/next, ESC/setas, contador) — 2026-06-13
+- **Thumbnail real do vídeo** extraída no client (canvas/seek 1s) ao fazer upload; botão "Gerar do vídeo" para regenerar de vídeos já existentes — 2026-06-13
 
 ## Backlog
 - P1: Sistema de avaliações (escrever review pós-atendimento)

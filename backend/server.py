@@ -732,7 +732,12 @@ async def set_main_image(mid: str, request: Request, url: str = Body(..., embed=
 
 
 @api.post("/admin/massagistas/{mid}/video")
-async def upload_video(mid: str, request: Request, file: UploadFile = File(...)):
+async def upload_video(
+    mid: str,
+    request: Request,
+    file: UploadFile = File(...),
+    thumb: Optional[UploadFile] = File(None),
+):
     admin = await require_admin(request)
     m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
     if not m:
@@ -748,12 +753,29 @@ async def upload_video(mid: str, request: Request, file: UploadFile = File(...))
             {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}},
         )
     update = {"video_url": url}
-    # Ensure a thumbnail exists — fallback to current main image so the play tile renders
-    if not m.get("video_thumb"):
+    # If thumbnail file provided (extracted from video on client), use it
+    if thumb is not None:
+        tf = await _admin_upload(admin, mid, "image", thumb)
+        update["video_thumb"] = tf["url"]
+    elif not m.get("video_thumb"):
         update["video_thumb"] = m.get("main_image") or (m.get("gallery") or [""])[0]
     await db.massagistas.update_one({"id": mid}, {"$set": update})
     fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
     return {"url": url, "massagista": fresh}
+
+
+@api.post("/admin/massagistas/{mid}/video-thumb")
+async def upload_video_thumb(mid: str, request: Request, file: UploadFile = File(...)):
+    admin = await require_admin(request)
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    if not m.get("video_url"):
+        raise HTTPException(400, "Profissional não possui vídeo")
+    f = await _admin_upload(admin, mid, "image", file)
+    await db.massagistas.update_one({"id": mid}, {"$set": {"video_thumb": f["url"]}})
+    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    return {"url": f["url"], "massagista": fresh}
 
 
 # ---------------------------------------------------------------------------
@@ -1435,7 +1457,11 @@ async def my_set_main(request: Request, url: str = Body(..., embed=True)):
 
 
 @api.post("/me/profile/video")
-async def my_profile_video(request: Request, file: UploadFile = File(...)):
+async def my_profile_video(
+    request: Request,
+    file: UploadFile = File(...),
+    thumb: Optional[UploadFile] = File(None),
+):
     user = await get_current_user(
         session_token=request.cookies.get("session_token"),
         authorization=request.headers.get("authorization"),
@@ -1452,11 +1478,33 @@ async def my_profile_video(request: Request, file: UploadFile = File(...)):
         sp = prev.split("/api/files/", 1)[1]
         await db.files.update_one({"storage_path": sp}, {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}})
     update = {"video_url": url}
-    if not m.get("video_thumb"):
+    if thumb is not None:
+        tf = await _admin_upload({"email": user["email"]}, m["id"], "image", thumb)
+        update["video_thumb"] = tf["url"]
+    elif not m.get("video_thumb"):
         update["video_thumb"] = m.get("main_image") or (m.get("gallery") or [""])[0]
     await db.massagistas.update_one({"id": m["id"]}, {"$set": update})
     fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
     return {"url": url, "massagista": fresh}
+
+
+@api.post("/me/profile/video-thumb")
+async def my_profile_video_thumb(request: Request, file: UploadFile = File(...)):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Crie seu perfil primeiro")
+    if not m.get("video_url"):
+        raise HTTPException(400, "Você ainda não tem vídeo")
+    f = await _admin_upload({"email": user["email"]}, m["id"], "image", file)
+    await db.massagistas.update_one({"id": m["id"]}, {"$set": {"video_thumb": f["url"]}})
+    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+    return {"url": f["url"], "massagista": fresh}
 
 
 

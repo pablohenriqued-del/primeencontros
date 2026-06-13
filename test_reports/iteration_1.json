@@ -1,0 +1,43 @@
+{
+  "summary": "Full backend (25 pytest tests) and frontend (Playwright) testing of Oásis Rio passed. All listed features in the review request work: massagistas seeding/list/filter/geo-sort/detail, bookings (auth, validation, amount from server-side pricing), Stripe checkout session creation + idempotent status polling, Emergent Google auth via Bearer token, and full Home → Detail → Booking dialog → Pay flow including MyBookings list.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/logout", "issue": "Only reads cookie session_token, not Authorization Bearer header. Bearer-based clients (the React app uses oasis_token in localStorage) cannot invalidate their session via this endpoint. Logout still works via cookie path. Recommend supporting Bearer token in logout symmetric with login/me/bookings."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Home hero", "issues": ["Decorative hero text shadow (text-shadow-lg) is a custom utility — verify it is defined in tailwind.config; if missing it silently does nothing"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_oasis_rio.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Make POST /api/auth/logout also accept Authorization: Bearer <token> to allow Bearer-based clients to invalidate their server session"
+  ],
+  "critical_code_review_comments": [
+    "server.py haversine + seed flow is clean; jitter for duplicate bairros is fine.",
+    "All Mongo reads use projection {_id: 0} — ObjectID never leaks. Good.",
+    "Amount for Stripe checkout is taken from DB booking (not request payload). Good — prevents tampering.",
+    "checkout_status correctly guards against re-toggling already-confirmed bookings (idempotent).",
+    "Pydantic models do not constrain duration to {60,90,120} or location_type to enum — relies on manual checks inside the handler. Would be cleaner to use Literal[60,90,120] and Literal['studio','home'].",
+    "CORS uses allow_origin_regex='.*' with allow_credentials=True — known browser quirk: cookies cross-origin can be blocked by ingress overriding ACAO to '*'. The Bearer token fallback in get_current_user is the right workaround (already implemented)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_oasis_rio.py (new)"
+  ],
+  "success_rate": {"backend": "100% (25/25)", "frontend": "100% (all listed flows verified)"},
+  "test_credentials": "Bearer token minted directly in MongoDB user_sessions (see /app/memory/test_credentials.md). Test session active during this run: token=test_token_1781312661253_njiski user_id=user_qa_w6dkfozf.",
+  "seed_data_creation": "Inserted 1 QA user + session token directly into MongoDB for protected endpoint testing. Cleaned up automatically via pytest fixture teardown for the main scoped user. Manual session (test_token_1781312661253_njiski) still present for browser test reproduction.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: https://stupefied-gauss-5.preview.emergentagent.com. Pytest file /app/backend/tests/test_oasis_rio.py covers all critical endpoints (health, bairros, massagistas CRUD-ish + filters, auth/me, bookings CRUD + validation, checkout session + status idempotency, logout). For UI tests inject Bearer token via add_init_script -> localStorage.setItem('oasis_token', <token>) BEFORE navigation so AuthContext picks it up. Route-block https://checkout.stripe.com/** to prevent navigation away during pay-button test. Frontend env URL in /app/frontend/.env differs from problem statement — use the .env value.",
+  "rca of the issue": "No bugs requiring RCA. The only minor finding (logout not accepting Bearer) is a small design symmetry issue, not a functional bug — the React app still works because cookie session is also created on login."
+}

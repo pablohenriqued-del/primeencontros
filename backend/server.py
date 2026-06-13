@@ -27,6 +27,8 @@ from emergentintegrations.payments.stripe.checkout import (
     CheckoutSessionRequest,
 )
 
+from promo_card import generate_promo_card
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -1680,6 +1682,35 @@ async def og_share(mid: str, request: Request, foto: Optional[int] = None):
 </body>
 </html>"""
     return HTMLResponse(content=html, headers={"Cache-Control": "public, max-age=300"})
+
+
+# ---------------------------------------------------------------------------
+# Promotional card (PNG 1080x1080) — for Instagram/Status sharing
+# ---------------------------------------------------------------------------
+@api.get("/massagistas/{mid}/promo-card.png")
+async def promo_card(mid: str, request: Request):
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Profissional não encontrada")
+    base = str(request.base_url).rstrip("/")
+    img_url = m.get("main_image") or ((m.get("gallery") or [""])[0])
+    if img_url and img_url.startswith("/api/"):
+        img_url = base + img_url
+    png_bytes = await generate_promo_card(
+        main_image_url=img_url,
+        name=m.get("name", "Profissional"),
+        bairro=m.get("bairro", "Rio de Janeiro"),
+        rating=float(m.get("rating") or 0),
+        reviews=int(m.get("reviews") or 0),
+        verified=bool(m.get("verified")),
+        cta_domain="primeencontros.com.br",
+    )
+    safe_name = "".join(c if c.isalnum() else "-" for c in m.get("name", "card")).strip("-").lower()[:40]
+    headers = {
+        "Cache-Control": "public, max-age=600",
+        "Content-Disposition": f'inline; filename="prime-{safe_name}.png"',
+    }
+    return Response(content=png_bytes, media_type="image/png", headers=headers)
 
 
 

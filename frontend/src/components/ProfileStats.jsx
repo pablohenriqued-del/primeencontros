@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { api, brl } from "@/lib/api";
-import { Eye, MessageCircle, CalendarCheck, DollarSign, Star, TrendingUp, Clock, ChevronDown, ChevronUp } from "lucide-react";
+import { api, brl, API_BASE } from "@/lib/api";
+import { Eye, MessageCircle, CalendarCheck, DollarSign, Star, TrendingUp, Clock, ChevronDown, ChevronUp, Download, Share2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const STATUS_LABEL = {
   pending_payment: "Pgto. pendente",
@@ -56,6 +58,45 @@ export default function ProfileStats() {
   if (!stats) return null;
 
   const { views, whatsapp_clicks, bookings, revenue, rating, conversion_rate_pct, recent_bookings } = stats;
+
+  const cardUrl = `${API_BASE}/massagistas/${stats.massagista_id}/promo-card.png`;
+  const downloadCard = async () => {
+    try {
+      const res = await fetch(`${cardUrl}?t=${Date.now()}`);
+      if (!res.ok) throw new Error("Falha ao gerar card");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `prime-encontros-${(stats.name || "card").toLowerCase().replace(/\s+/g, "-")}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Card baixado · poste no Instagram/Status");
+    } catch {
+      toast.error("Não foi possível baixar o card");
+    }
+  };
+  const shareCard = async () => {
+    try {
+      const res = await fetch(`${cardUrl}?t=${Date.now()}`);
+      if (!res.ok) throw new Error("Falha ao gerar card");
+      const blob = await res.blob();
+      const file = new File([blob], `prime-${stats.massagista_id}.png`, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `${stats.name} · Prime Encontros`,
+          text: "Reserve em primeencontros.com.br",
+        });
+      } else {
+        await downloadCard();
+      }
+    } catch {
+      toast.error("Compartilhamento não suportado neste dispositivo");
+    }
+  };
 
   return (
     <section data-testid="profile-stats" className="space-y-4">
@@ -127,6 +168,48 @@ export default function ProfileStats() {
               </div>
             </div>
           )}
+
+          {/* Promo card generator */}
+          <div className="rounded-2xl border border-zinc-900 bg-zinc-950 overflow-hidden" data-testid="promo-card-section">
+            <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-4 p-4 sm:p-5 items-center">
+              <a
+                href={`${cardUrl}?t=preview`}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="promo-card-preview"
+                className="block aspect-square w-full sm:w-[200px] rounded-xl overflow-hidden border border-zinc-800 bg-black hover:border-red-600/60 transition-colors"
+              >
+                <img src={`${cardUrl}?t=preview`} alt="Preview do card" className="w-full h-full object-cover" />
+              </a>
+              <div className="space-y-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-red-500 font-semibold mb-1">Card promocional</div>
+                  <div className="font-display text-lg text-zinc-50">Pronto para o Instagram</div>
+                  <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                    Imagem 1080x1080 com sua foto, nome, bairro, estrelas e o CTA para reservar.
+                    Ideal para Stories, feed e Status do WhatsApp.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={downloadCard}
+                    data-testid="download-promo-card"
+                    className="rounded-xl bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    <Download className="h-4 w-4 mr-1.5" /> Baixar PNG
+                  </Button>
+                  <Button
+                    onClick={shareCard}
+                    variant="outline"
+                    data-testid="share-promo-card"
+                    className="rounded-xl border-zinc-700 text-zinc-200 hover:bg-zinc-900"
+                  >
+                    <Share2 className="h-4 w-4 mr-1.5" /> Compartilhar
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
 
           {recent_bookings && recent_bookings.length > 0 && (
             <div className="rounded-2xl border border-zinc-900 bg-zinc-950 overflow-hidden">

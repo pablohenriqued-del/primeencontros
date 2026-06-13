@@ -241,6 +241,16 @@ class WhatsAppClick(BaseModel):
     source: Optional[str] = "detail"  # detail | modal | map
 
 
+class ManualBookingCreate(BaseModel):
+    massagista_id: str
+    user_email: str
+    date: str  # YYYY-MM-DD
+    time: str  # HH:MM
+    duration: int  # 60 | 90 | 120
+    payment_method: str = "manual"  # whatsapp | pix | cash | manual
+    notes: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
@@ -1353,6 +1363,57 @@ async def whatsapp_stats(request: Request):
         "global_conversion_pct": round((total_confirmed / total_clicks) * 100, 1) if total_clicks > 0 else None,
         "by_massagista": out,
     }
+
+
+# ---------------------------------------------------------------------------
+# Admin: bookings (manual confirmation for offline payments)
+# ---------------------------------------------------------------------------
+@api.get("/admin/bookings")
+async def admin_list_bookings(request: Request, status: Optional[str] = Query(None), limit: int = Query(100, le=500)):
+    await require_admin(request)
+    query: Dict[str, Any] = {}
+    if status:
+        query["status"] = status
+    docs = await db.bookings.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return docs
+
+
+@api.post("/admin/bookings/manual")
+async def admin_manual_booking(payload: ManualBookingCreate, request: Request):
+    admin = await require_admin(request)
+    m = await db.massagistas.find_one({"id": payload.massagista_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    user = await db.users.find_one({"email": payload.user_email.strip().lower()}, {"_id": 0})
+    if not user:
+        raise HTTPException(404, "Cliente não encontrado — peça para o cliente fazer login pelo menos uma vez antes")
+    amount = _amount_for(m, payload.duration)
+    method = payload.payment_method if payload.payment_method in ("whatsapp", "pix", "cash", "manual") else "manual"
+    booking = {
+        "id": f"b_{uuid.uuid4().hex[:10]}",
+        "user_id": user["user_id"],
+        "user_email": user["email"],
+        "massagista_id": m["id"],
+        "massagista_name": m["name"],
+        "massagista_image": m["main_image"],
+        "bairro": m["bairro"],
+        "date": payload.date,
+        "time": payload.time,
+        "duration": payload.duration,
+        "location_type": "studio",
+        "address": None,
+        "notes": payload.notes,
+        "amount": amount,
+        "currency": "brl",
+        "status": "confirmed",
+        "payment_session_id": None,
+        "payment_method": method,
+        "manual_confirmed_by": admin["email"],
+        "manual_confirmed_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.bookings.insert_one(dict(booking))
+    return booking
 
 
 @api.post("/me/profile/set-main")

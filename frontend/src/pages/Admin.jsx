@@ -11,10 +11,12 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, ShieldAlert, ShieldX, MapPin, Star, Loader2, ImageIcon, Pencil, MessageCircle, TrendingUp } from "lucide-react";
+import { ShieldCheck, ShieldAlert, ShieldX, MapPin, Star, Loader2, ImageIcon, Pencil, MessageCircle, TrendingUp, CalendarCheck, Plus } from "lucide-react";
 import { toast } from "sonner";
 import MediaEditor from "@/components/MediaEditor";
 import AdminProfileEditor from "@/components/AdminProfileEditor";
+import ManualBookingDialog from "@/components/ManualBookingDialog";
+import { brl } from "@/lib/api";
 
 function Pill({ verified }) {
   return verified ? (
@@ -43,6 +45,9 @@ export default function Admin() {
   const [editTarget, setEditTarget] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
+  const [bookings, setBookings] = useState([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
 
   const fetchList = async () => {
     setLoading(true);
@@ -70,11 +75,25 @@ export default function Admin() {
     }
   };
 
+  const fetchBookings = async () => {
+    setBookingsLoading(true);
+    try {
+      const { data } = await api.get("/admin/bookings");
+      setBookings(data);
+    } catch {
+      toast.error("Erro ao carregar reservas");
+    } finally {
+      setBookingsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (authLoading) return;
     if (!user) { setLoading(false); return; }
     if (view === "metrics") {
       fetchMetrics();
+    } else if (view === "bookings") {
+      fetchBookings();
     } else {
       fetchList();
     }
@@ -166,6 +185,9 @@ export default function Admin() {
             <TabsTrigger value="metrics" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-metrics">
               <TrendingUp className="h-3.5 w-3.5 mr-1" /> WhatsApp
             </TabsTrigger>
+            <TabsTrigger value="bookings" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-bookings">
+              <CalendarCheck className="h-3.5 w-3.5 mr-1" /> Reservas
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -173,8 +195,7 @@ export default function Admin() {
       {view === "metrics" ? (
         metricsLoading || !metrics ? (
           <div className="space-y-3">{[0,1,2].map(i => <div key={i} className="h-20 rounded-2xl bg-zinc-900 animate-pulse" />)}</div>
-        ) : (
-          <div data-testid="metrics-panel">
+        ) : (          <div data-testid="metrics-panel">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
               <div className="rounded-2xl border border-zinc-900 bg-zinc-950 p-4">
                 <div className="text-xs uppercase tracking-wider text-zinc-500">Cliques no WhatsApp</div>
@@ -226,6 +247,62 @@ export default function Admin() {
             <p className="text-[11px] text-zinc-500 mt-4">
               Métrica útil para entender quanto da receita potencial pode estar acontecendo via WhatsApp (fora da plataforma).
               Profissionais com muitos cliques e poucas reservas Stripe são candidatas a renegociação de comissão.
+            </p>
+          </div>
+        )
+      ) : view === "bookings" ? (
+        bookingsLoading ? (
+          <div className="space-y-3">{[0,1,2].map(i => <div key={i} className="h-20 rounded-2xl bg-zinc-900 animate-pulse" />)}</div>
+        ) : (
+          <div data-testid="bookings-panel">
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
+              <div className="text-sm text-zinc-400">
+                {bookings.length} {bookings.length === 1 ? "reserva" : "reservas"} no total
+              </div>
+              <Button onClick={() => setManualOpen(true)} data-testid="open-manual-booking" className="rounded-full bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-600/25">
+                <Plus className="h-4 w-4 mr-1.5" /> Lançar atendimento
+              </Button>
+            </div>
+            {bookings.length === 0 ? (
+              <div className="text-center py-16 text-zinc-500 rounded-2xl bg-zinc-950 border border-zinc-900">
+                Nenhuma reserva ainda. Use "Lançar atendimento" para registrar uma sessão paga fora da plataforma.
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-zinc-900 bg-zinc-950 overflow-hidden">
+                {bookings.map((b) => {
+                  const isManual = !!b.manual_confirmed_by;
+                  const statusCls = b.status === "confirmed"
+                    ? "bg-red-600/15 text-red-300 border border-red-600/40"
+                    : b.status === "pending_payment"
+                    ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                    : "bg-zinc-800 text-zinc-400 border border-zinc-800";
+                  return (
+                    <div key={b.id} data-testid={`booking-row-${b.id}`} className="px-4 py-3 border-b border-zinc-900 last:border-b-0 flex items-center gap-3 flex-wrap hover:bg-zinc-900/40 transition-colors">
+                      <img src={b.massagista_image} alt="" className="h-12 w-12 rounded-lg object-cover shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-display text-sm font-semibold text-zinc-50">{b.massagista_name}</span>
+                          <span className="text-xs text-zinc-500">·</span>
+                          <span className="text-xs text-zinc-400">{b.user_email}</span>
+                        </div>
+                        <div className="text-[11px] text-zinc-500 mt-0.5">
+                          {b.date} · {b.time} · {b.duration} min · {b.bairro}
+                          {isManual && b.payment_method && <span className="ml-2 text-amber-300">· pago via {b.payment_method.toUpperCase()}</span>}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className={`inline-flex items-center rounded-full text-[11px] px-2 py-0.5 font-medium ${statusCls}`}>
+                          {b.status === "confirmed" ? "Confirmada" : b.status === "pending_payment" ? "Pendente" : "Cancelada"}
+                        </div>
+                        <div className="font-display text-base font-semibold text-zinc-50 mt-1">{brl(b.amount)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[11px] text-zinc-500 mt-4">
+              Lançar atendimento manual cria uma reserva já confirmada — o cliente verá em "Minhas reservas" e poderá deixar a avaliação.
             </p>
           </div>
         )

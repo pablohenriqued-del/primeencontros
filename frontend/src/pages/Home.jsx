@@ -85,7 +85,7 @@ export default function Home() {
               Massagem profissional, <em className="not-italic font-medium text-red-500">onde você estiver</em>.
             </h1>
             <p className="mt-5 text-base sm:text-lg text-zinc-300 max-w-xl">
-              Profissionais verificados em Ipanema, Leblon, Copacabana e mais 9 bairros do Rio.
+              Profissionais verificados em Barra, Recreio, Ipanema, Leblon, Copacabana e mais 9 bairros do Rio.
               Agende em segundos e pague com segurança.
             </p>
           </div>

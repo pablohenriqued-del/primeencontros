@@ -88,30 +88,49 @@ export default function MyProfile() {
   };
 
   const save = async () => {
+    // Frontend validation with clear PT-BR messages
+    const name = form.name.trim();
+    if (name.length < 2) { toast.error("Informe seu nome profissional"); return; }
+    if (!form.bairro_slug) { toast.error("Selecione o bairro de atendimento"); return; }
+    if (form.bio.trim().length < 10) { toast.error("A bio precisa ter pelo menos 10 caracteres"); return; }
+    if (form.specialties.length === 0) { toast.error("Escolha ao menos uma especialidade"); return; }
+    const p60 = parseFloat(form.price_60);
+    if (!p60 || p60 <= 0) { toast.error("Preço de 60 min precisa ser maior que zero"); return; }
+    const exp = parseInt(form.experience_years, 10);
+    if (Number.isNaN(exp) || exp < 0) { toast.error("Informe seus anos de experiência"); return; }
+    if (form.languages.length === 0) { toast.error("Informe ao menos um idioma"); return; }
+
     setSaving(true);
     try {
       const payload = {
-        name: form.name,
+        name,
         bairro_slug: form.bairro_slug,
-        bio: form.bio,
+        bio: form.bio.trim(),
         specialties: form.specialties,
-        price_60: parseFloat(form.price_60),
+        price_60: p60,
         price_90: form.price_90 ? parseFloat(form.price_90) : undefined,
         price_120: form.price_120 ? parseFloat(form.price_120) : undefined,
-        experience_years: parseInt(form.experience_years, 10) || 0,
+        experience_years: exp,
         languages: form.languages,
       };
+      const wasNew = !profile;
       if (profile) {
         const { data } = await api.put("/me/profile", payload);
         setProfile(data);
-        toast.success("Perfil atualizado");
+        toast.success("Perfil atualizado com sucesso");
       } else {
         const { data } = await api.post("/me/profile", payload);
         setProfile(data);
-        toast.success("Perfil criado · aguardando verificação");
+        toast.success("Perfil criado · agora envie suas fotos");
+        // Auto-open MediaEditor right after creation for a smoother flow
+        if (wasNew) setTimeout(() => setMedia(true), 600);
       }
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Erro ao salvar");
+      const detail = e?.response?.data?.detail;
+      let msg = "Erro ao salvar";
+      if (typeof detail === "string") msg = detail;
+      else if (Array.isArray(detail) && detail[0]?.msg) msg = `Campo inválido: ${detail[0].msg}`;
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -124,7 +143,7 @@ export default function MyProfile() {
           <h1 className="font-display text-3xl font-medium text-zinc-50">{profile ? "Meu perfil profissional" : "Cadastrar perfil profissional"}</h1>
           <p className="text-zinc-400 text-sm mt-1">{profile ? "Edite seus dados, preços e disponibilidade." : "Preencha os dados abaixo para começar a receber clientes."}</p>
         </div>
-        {profile && (
+        {profile ? (
           <div className="flex items-center gap-2">
             {profile.verified ? (
               <Badge className="bg-red-600 text-white rounded-full border-0 shadow-[0_0_12px_rgba(220,38,38,0.6)]">
@@ -138,6 +157,10 @@ export default function MyProfile() {
             <Button data-testid="edit-my-media" onClick={() => setMedia(true)} variant="outline" className="rounded-full border-zinc-700 text-zinc-200 hover:bg-zinc-900">
               <ImageIcon className="h-4 w-4 mr-1.5" /> Editar fotos / vídeo
             </Button>
+          </div>
+        ) : (
+          <div className="text-xs text-zinc-500 max-w-xs text-right">
+            Salve seu perfil para liberar o envio de fotos e vídeo.
           </div>
         )}
       </div>

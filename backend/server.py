@@ -3,16 +3,18 @@ Oásis Rio – Backend API
 Massage therapist marketplace for Rio de Janeiro.
 """
 import os
+import io
 import uuid
 import math
 import logging
+import requests
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 import httpx
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Cookie, Header, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Cookie, Header, Query, UploadFile, File, Body
+from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -36,8 +38,84 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 EMERGENT_AUTH_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
+
+# ---------------------------------------------------------------------------
+# Object storage (Emergent)
+# ---------------------------------------------------------------------------
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+APP_NAME = "prime-encontros"
+_storage_key: Optional[str] = None
+ALLOWED_IMAGE = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+ALLOWED_VIDEO = {"video/mp4", "video/quicktime", "video/webm"}
+EXT_FOR = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp",
+    "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm",
+}
+
+
+def init_storage() -> Optional[str]:
+    global _storage_key
+    if _storage_key:
+        return _storage_key
+    if not EMERGENT_LLM_KEY:
+        logger.error("EMERGENT_LLM_KEY missing — storage disabled")
+        return None
+    try:
+        r = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
+        r.raise_for_status()
+        _storage_key = r.json()["storage_key"]
+        logger.info("Storage initialized")
+        return _storage_key
+    except Exception as e:
+        logger.exception("Storage init failed: %s", e)
+        return None
+
+
+def put_object(path: str, data: bytes, content_type: str) -> Dict[str, Any]:
+    key = init_storage()
+    if not key:
+        raise HTTPException(500, "Object storage indisponível")
+    r = requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data, timeout=120,
+    )
+    if r.status_code == 403:
+        global _storage_key
+        _storage_key = None
+        key = init_storage()
+        r = requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type},
+            data=data, timeout=120,
+        )
+    r.raise_for_status()
+    return r.json()
+
+
+def get_object(path: str) -> tuple:
+    key = init_storage()
+    if not key:
+        raise HTTPException(500, "Object storage indisponível")
+    r = requests.get(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key}, timeout=60,
+    )
+    if r.status_code == 403:
+        global _storage_key
+        _storage_key = None
+        key = init_storage()
+        r = requests.get(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key}, timeout=60,
+        )
+    if r.status_code == 404:
+        raise HTTPException(404, "Arquivo não encontrado")
+    r.raise_for_status()
+    return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
 # ---------------------------------------------------------------------------
 # App
@@ -147,21 +225,24 @@ BAIRRO_MAP = {b.slug: b for b in BAIRROS}
 SAMPLE_VIDEO = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
 SPA1 = "https://images.unsplash.com/photo-1741522509438-a120c0bb5e88?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDN8MHwxfHNlYXJjaHwxfHxzcGElMjBtYXNzYWdlJTIwY2FsbXxlbnwwfHx8fDE3ODEzMTE5NzV8MA&ixlib=rb-4.1.0&q=85"
 SPA2 = "https://images.unsplash.com/photo-1639162906614-0603b0ae95fd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDN8MHwxfHNlYXJjaHwzfHxzcGElMjBtYXNzYWdlJTIwY2FsbXxlbnwwfHx8fDE3ODEzMTE5NzV8MA&ixlib=rb-4.1.0&q=85"
+SPA3 = "https://images.unsplash.com/photo-1544161515-4ab6ce6db874?crop=entropy&cs=srgb&fm=jpg&w=900&q=80"
+SPA4 = "https://images.unsplash.com/photo-1600334129128-685c5582fd35?crop=entropy&cs=srgb&fm=jpg&w=900&q=80"
 
-# Portraits — curated Unsplash images
+# Female portraits — sourced from randomuser.me (100% reliable, all women).
+# Admin can upload higher-quality replacements via the Media Editor.
 PORTRAITS = [
-    "https://images.unsplash.com/photo-1598901978648-4d1c0d66518a?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1756699197173-5ef672a423fa?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1746813628081-0c8c1611aace?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1544005313-94ddf0286df2?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1521119989659-a83eee488004?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1607746882042-944635dfe10e?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
-    "https://images.unsplash.com/photo-1580489944761-15a19d654956?crop=entropy&cs=srgb&fm=jpg&w=800&q=80",
+    "https://randomuser.me/api/portraits/women/65.jpg",
+    "https://randomuser.me/api/portraits/women/44.jpg",
+    "https://randomuser.me/api/portraits/women/68.jpg",
+    "https://randomuser.me/api/portraits/women/26.jpg",
+    "https://randomuser.me/api/portraits/women/79.jpg",
+    "https://randomuser.me/api/portraits/women/12.jpg",
+    "https://randomuser.me/api/portraits/women/49.jpg",
+    "https://randomuser.me/api/portraits/women/33.jpg",
+    "https://randomuser.me/api/portraits/women/8.jpg",
+    "https://randomuser.me/api/portraits/women/56.jpg",
+    "https://randomuser.me/api/portraits/women/21.jpg",
+    "https://randomuser.me/api/portraits/women/90.jpg",
 ]
 
 SEED_PROFILES = [
@@ -169,23 +250,23 @@ SEED_PROFILES = [
         ["Relaxante", "Pedras Quentes", "Shiatsu"], 220.0, 8, ["Português", "Inglês"]),
     ("Mariana Costa", "leblon", 4.8, 187, "Terapeuta com formação em terapias orientais. Foco em alívio de tensões e dores musculares crônicas.",
         ["Shiatsu", "Tui Ná", "Reflexologia"], 280.0, 12, ["Português", "Inglês", "Espanhol"]),
-    ("Rafael Silva", "copacabana", 4.7, 156, "Massoterapeuta esportivo com experiência em atletas profissionais. Recuperação muscular pós-treino.",
-        ["Esportiva", "Drenagem", "Liberação Miofascial"], 250.0, 10, ["Português"]),
-    ("Beatriz Almeida", "botafogo", 4.9, 298, "Sou apaixonada por aromaterapia. Sessões que combinam óleos essenciais e técnica suave.",
+    ("Larissa Mendes", "copacabana", 4.7, 156, "Massoterapeuta esportiva com experiência em atletas amadores e profissionais. Recuperação muscular pós-treino.",
+        ["Esportiva", "Drenagem", "Liberação Miofascial"], 250.0, 10, ["Português", "Inglês"]),
+    ("Beatriz Almeida", "botafogo", 4.9, 298, "Apaixonada por aromaterapia. Sessões que combinam óleos essenciais e técnica suave para relaxamento profundo.",
         ["Aromaterapia", "Relaxante", "Sueca"], 200.0, 6, ["Português", "Francês"]),
-    ("Luís Henrique", "flamengo", 4.6, 92, "Quiropraxia e massagem ortopédica. Indicado para quem trabalha horas no computador.",
+    ("Júlia Ribeiro", "flamengo", 4.6, 92, "Quiropraxia e massagem ortopédica. Indicado para quem trabalha horas no computador e sente dores cervicais.",
         ["Quiropraxia", "Ortopédica", "Postura"], 240.0, 9, ["Português"]),
     ("Isabela Martins", "jardim-botanico", 4.9, 341, "Drenagem linfática modeladora e pós-cirúrgico. Ambiente tranquilo no Jardim Botânico.",
         ["Drenagem Linfática", "Modeladora", "Pós-cirúrgico"], 260.0, 11, ["Português", "Inglês"]),
-    ("André Pereira", "tijuca", 4.5, 78, "Massagem terapêutica com 7 anos de experiência. Atendo na clínica ou no seu endereço.",
+    ("Clara Vieira", "tijuca", 4.5, 78, "Massagem terapêutica com 7 anos de experiência. Atendo na clínica ou no seu endereço com mesa portátil.",
         ["Terapêutica", "Relaxante", "Anti-stress"], 180.0, 7, ["Português"]),
-    ("Fernanda Lima", "barra-da-tijuca", 4.8, 220, "Bambuterapia e ventosaterapia. Técnicas integradas para bem-estar profundo.",
+    ("Fernanda Lima", "barra-da-tijuca", 4.8, 220, "Bambuterapia e ventosaterapia. Técnicas integradas para bem-estar profundo e alívio de tensões antigas.",
         ["Bambuterapia", "Ventosaterapia", "Relaxante"], 270.0, 9, ["Português", "Inglês"]),
-    ("Gustavo Rocha", "laranjeiras", 4.7, 134, "Massagem desportiva e liberação de gatilhos. Atendimento direto, sem firulas.",
+    ("Letícia Barros", "laranjeiras", 4.7, 134, "Massagem desportiva e liberação de gatilhos. Atendimento direto, focado em resultado.",
         ["Esportiva", "Pontos de Gatilho", "Profunda"], 230.0, 8, ["Português", "Espanhol"]),
-    ("Patrícia Nogueira", "lagoa", 4.9, 256, "Reiki e massagem energética. Para quem busca um equilíbrio além do físico.",
+    ("Patrícia Nogueira", "lagoa", 4.9, 256, "Reiki e massagem energética. Para quem busca um equilíbrio que vai além do físico.",
         ["Reiki", "Energética", "Relaxante"], 210.0, 13, ["Português", "Inglês"]),
-    ("Diego Vasconcelos", "urca", 4.8, 167, "Estúdio acolhedor na Urca. Massagem sueca e desportiva de alto padrão.",
+    ("Tatiane Castro", "urca", 4.8, 167, "Estúdio acolhedor na Urca. Massagem sueca e desportiva de alto padrão, ambiente reservado.",
         ["Sueca", "Esportiva", "Profunda"], 290.0, 10, ["Português", "Inglês"]),
     ("Renata Oliveira", "recreio", 4.6, 88, "Massagem relaxante e gestante. Cuidado especial e seguro para futuras mamães.",
         ["Gestante", "Relaxante", "Sueca"], 220.0, 6, ["Português"]),
@@ -203,7 +284,7 @@ async def seed_massagistas():
         jitter_lat = (i % 5) * 0.0008
         jitter_lng = (i % 4) * 0.0008
         portrait = PORTRAITS[i % len(PORTRAITS)]
-        gallery = [portrait, SPA1, SPA2, PORTRAITS[(i + 3) % len(PORTRAITS)]]
+        gallery = [portrait, SPA1, SPA2, SPA3 if i % 2 == 0 else SPA4]
         m = {
             "id": f"m_{uuid.uuid4().hex[:10]}",
             "name": name,
@@ -458,6 +539,127 @@ async def revoke_verification(mid: str, request: Request):
         }},
     )
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Files (object storage)
+# ---------------------------------------------------------------------------
+def _public_file_url(storage_path: str) -> str:
+    return f"/api/files/{storage_path}"
+
+
+@api.get("/files/{path:path}")
+async def get_file(path: str):
+    record = await db.files.find_one({"storage_path": path, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(404, "Arquivo não encontrado")
+    data, content_type = get_object(path)
+    return Response(content=data, media_type=record.get("content_type") or content_type)
+
+
+async def _admin_upload(admin: Dict[str, Any], mid: str, kind: str, file: UploadFile) -> Dict[str, Any]:
+    if kind == "image":
+        if file.content_type not in ALLOWED_IMAGE:
+            raise HTTPException(400, "Formato de imagem não suportado (use JPG, PNG ou WEBP)")
+    elif kind == "video":
+        if file.content_type not in ALLOWED_VIDEO:
+            raise HTTPException(400, "Formato de vídeo não suportado (use MP4, MOV ou WEBM)")
+    ext = EXT_FOR.get(file.content_type, "bin")
+    storage_path = f"{APP_NAME}/massagistas/{mid}/{uuid.uuid4().hex}.{ext}"
+    data = await file.read()
+    max_bytes = 100 * 1024 * 1024 if kind == "video" else 8 * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(413, f"Arquivo excede o limite de {max_bytes // (1024 * 1024)}MB")
+    result = put_object(storage_path, data, file.content_type)
+    record = {
+        "id": f"f_{uuid.uuid4().hex[:12]}",
+        "massagista_id": mid,
+        "kind": kind,
+        "storage_path": result["path"],
+        "content_type": file.content_type,
+        "size": result.get("size", len(data)),
+        "original_filename": file.filename,
+        "uploaded_by": admin["email"],
+        "is_deleted": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.files.insert_one(dict(record))
+    return {**record, "url": _public_file_url(result["path"])}
+
+
+@api.post("/admin/massagistas/{mid}/photo")
+async def upload_photo(mid: str, request: Request, file: UploadFile = File(...)):
+    admin = await require_admin(request)
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    f = await _admin_upload(admin, mid, "image", file)
+    url = f["url"]
+    # Append to gallery; if first photo, also set as main_image
+    update = {"$push": {"gallery": url}}
+    if not m.get("main_image") or m.get("main_image", "").startswith("https://images.unsplash.com"):
+        # Don't auto-override the seed main; admin can set explicitly
+        pass
+    await db.massagistas.update_one({"id": mid}, update)
+    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    return {"url": url, "massagista": fresh}
+
+
+@api.delete("/admin/massagistas/{mid}/photo")
+async def delete_photo(mid: str, request: Request, url: str = Body(..., embed=True)):
+    admin = await require_admin(request)
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    await db.massagistas.update_one({"id": mid}, {"$pull": {"gallery": url}})
+    # If main_image was this URL, fallback to first gallery item
+    if m.get("main_image") == url:
+        remaining = [g for g in m.get("gallery", []) if g != url]
+        new_main = remaining[0] if remaining else ""
+        await db.massagistas.update_one({"id": mid}, {"$set": {"main_image": new_main}})
+    # Soft-delete file record if it's an uploaded file
+    if "/api/files/" in url:
+        storage_path = url.split("/api/files/", 1)[1]
+        await db.files.update_one(
+            {"storage_path": storage_path},
+            {"$set": {"is_deleted": True, "deleted_by": admin["email"], "deleted_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    return {"ok": True, "massagista": fresh}
+
+
+@api.post("/admin/massagistas/{mid}/set-main")
+async def set_main_image(mid: str, request: Request, url: str = Body(..., embed=True)):
+    await require_admin(request)
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    if url not in (m.get("gallery") or []):
+        raise HTTPException(400, "URL precisa estar na galeria primeiro")
+    await db.massagistas.update_one({"id": mid}, {"$set": {"main_image": url}})
+    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    return {"ok": True, "massagista": fresh}
+
+
+@api.post("/admin/massagistas/{mid}/video")
+async def upload_video(mid: str, request: Request, file: UploadFile = File(...)):
+    admin = await require_admin(request)
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    f = await _admin_upload(admin, mid, "video", file)
+    url = f["url"]
+    # Soft-delete previous video file record if it pointed at storage
+    prev = m.get("video_url", "")
+    if prev and "/api/files/" in prev:
+        storage_path = prev.split("/api/files/", 1)[1]
+        await db.files.update_one(
+            {"storage_path": storage_path},
+            {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    await db.massagistas.update_one({"id": mid}, {"$set": {"video_url": url}})
+    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    return {"url": url, "massagista": fresh}
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +983,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    init_storage()
     await seed_massagistas()
     await migrate_massagistas()
 

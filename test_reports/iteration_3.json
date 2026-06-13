@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 3 — Prime Encontros media uploads + female-only seed + verified_only regression. ALL 26 backend pytest cases pass and all 7 frontend Playwright UI flows pass. Verified: (1) GET /api/massagistas returns 12 all-female profiles (Camila/Mariana/Larissa/Beatriz/Júlia/Isabela/Clara/Fernanda/Letícia/Patrícia/Tatiane/Renata) — no male names leaked. (2) All 12 portraits source from randomuser.me/api/portraits/women/. (3) verified_only=true returns exactly 8 (REGRESSION fix confirmed — Home toggle previously sent no param, now correctly hits API). (4) Object storage initializes successfully on backend startup (log: 'Storage initialized' x3). (5) /api/files/{path} returns 404 for unknown, 200 with correct Content-Type for uploaded. (6) Photo upload: 401 no-auth, 403 non-admin, 400 bad content-type, 404 unknown mid, 200 admin happy path with URL=/api/files/prime-encontros/massagistas/{mid}/{uuid}.{ext} appended to gallery. (7) set-main: 200 on gallery URL, 400 if not in gallery. (8) DELETE photo: removes from gallery, falls back main_image, soft-deletes file record (subsequent GET on storage_path returns 404). (9) Video upload: 401/400 enforced, replaces video_url. (10) MediaEditor UI: dialog opens with photos+video tabs, file picker upload progresses + refreshes gallery, set-main + delete work, video tab shows Big Buck Bunny seed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_media.py",
+    "/app/backend/tests/test_verification.py",
+    "/app/test_reports/pytest/iteration_3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py upload_photo: comment '# Don't auto-override the seed main; admin can set explicitly' is correct but the surrounding `if not m.get('main_image') or m.get('main_image','').startswith('https://images.unsplash.com')` block is dead code (pass-only). Cosmetic only — can be removed.",
+    "server.py delete_photo: soft-delete by storage_path is correct, but if a file is replaced (e.g., video) and the *new* file happens to be in another massagista, only storage_path is matched (not massagista_id). Low risk since paths include UUIDs, but consider scoping to {storage_path, massagista_id} for defense-in-depth.",
+    "server.py _admin_upload: file.read() loads entire file in memory before size check (max 100MB videos). For large uploads this can spike RSS. Acceptable for current scale but consider streaming or Content-Length pre-check.",
+    "server.py get_file: returns Response with `media_type=record.get('content_type') or content_type` — good, but no Cache-Control header. Hot images will hit object storage on every request. Consider adding `Cache-Control: public, max-age=86400` for performance.",
+    "server.py: requests.put/get to storage are SYNCHRONOUS calls inside async endpoint handlers — this blocks the event loop during large uploads. Should be wrapped with run_in_executor or replaced with httpx.AsyncClient for true concurrency. NOT a correctness issue, just throughput.",
+    "MediaEditor.jsx delete uses window.confirm() — jarring vs Dialog UX, same comment as Admin revoke. Optional polish.",
+    "server.py SEED_PROFILES literal has 12 entries hard-coded — fine for MVP, but if the count changes the migration logic (which keys on first-time empty collection) will skip on existing dbs. Document the wipe-needed for re-seed iterations."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_media.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (26/26 pytest passed across test_media.py + test_verification.py)",
+    "frontend": "100% (7/7 UI assertions passed: 12 cards, 8 badges, female-only first card, randomuser image, verified_only toggle 12↔8, MediaEditor open with both tabs, upload→thumbnail+/api/files src, set-main, delete, video tab Big Buck Bunny)"
+  },
+  "test_credentials": "Admin Bearer: test_admin_token_1781314522749 (qa-admin+1781314522749@oasisrio.test, is_admin=true). Non-admin Bearer: test_nonadmin_token_1781314522758 (qa-nonadmin+1781314522758@oasisrio.test). Sessions refreshed +7d in this iteration.",
+  "seed_data_creation": "No new seed; ensured admin + non-admin user sessions exist and are non-expired in db.user_sessions. Confirmed db.massagistas count=12, verified=8. Photo lifecycle test creates+deletes ephemeral entries in db.files (soft-delete cleanup is built into the test).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: https://stupefied-gauss-5.preview.emergentagent.com (from frontend/.env). Tokens: ADMIN_TOKEN=test_admin_token_1781314522749, NONADMIN_TOKEN=test_nonadmin_token_1781314522758. Regression command: `ADMIN_TOKEN=test_admin_token_1781314522749 NONADMIN_TOKEN=test_nonadmin_token_1781314522758 python -m pytest /app/backend/tests/test_media.py /app/backend/tests/test_verification.py -v`. UI: inject via `page.add_init_script(\"localStorage.setItem('oasis_token','<TOKEN>')\")` BEFORE goto. Photo upload via Playwright: locate `input[type='file'][accept*='image']` adjacent to upload-photo-button and call set_input_files() — clicking the upload button alone won't work (no file picker dialog in headless). Use page.on('dialog', ...) auto-accept before clicking delete-photo-{i}. The MediaEditor.resolveUrl helper prefixes /api/files/ paths with REACT_APP_BACKEND_URL — confirmed working. Object storage is shared (Emergent objstore), so file paths created in tests persist (the lifecycle test cleans up its own files via soft-delete).",
+  "rca of the issue": "N/A — the previous 'Apenas verificadas' toggle bug is confirmed FIXED: Playwright captured TOGGLE ON → 8 cards, TOGGLE OFF → 12 cards. Home.jsx now correctly passes verified_only=true through fetchList."
+}

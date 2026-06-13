@@ -11,8 +11,9 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, ShieldAlert, ShieldX, MapPin, Star, Loader2 } from "lucide-react";
+import { ShieldCheck, ShieldAlert, ShieldX, MapPin, Star, Loader2, ImageIcon } from "lucide-react";
 import { toast } from "sonner";
+import MediaEditor from "@/components/MediaEditor";
 
 function Pill({ verified }) {
   return verified ? (
@@ -37,6 +38,7 @@ export default function Admin() {
   const [checks, setChecks] = useState({ id: true, photo: true, address: true });
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [mediaTarget, setMediaTarget] = useState(null);
 
   const fetchList = async () => {
     setLoading(true);
@@ -170,7 +172,15 @@ export default function Admin() {
                   </div>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  data-testid={`edit-media-${m.id}`}
+                  onClick={() => setMediaTarget(m)}
+                  variant="outline"
+                  className="rounded-full border-zinc-700 text-zinc-200 hover:bg-zinc-900 hover:text-red-400"
+                >
+                  <ImageIcon className="h-4 w-4 mr-1.5" /> Mídia
+                </Button>
                 {!m.verified && (
                   <>
                     <Button data-testid={`approve-${m.id}`} onClick={() => openModeration(m, "approve")} className="rounded-full bg-red-600 hover:bg-red-700 text-white">
@@ -192,8 +202,7 @@ export default function Admin() {
         </div>
       )}
 
-      <Dialog open={!!target} onOpenChange={(v) => !v && setTarget(null)}>
-        <DialogContent className="bg-zinc-950 border border-zinc-900 text-zinc-100 max-w-md">
+      <Dialog open={!!target} onOpenChange={(v) => !v && setTarget(null)}>        <DialogContent className="bg-zinc-950 border border-zinc-900 text-zinc-100 max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display text-xl text-zinc-50">
               {action === "approve" ? "Aprovar verificação" : "Rejeitar verificação"}
@@ -247,6 +256,16 @@ export default function Admin() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <MediaEditor
+        open={!!mediaTarget}
+        massagista={mediaTarget}
+        onClose={() => setMediaTarget(null)}
+        onUpdated={(updated) => {
+          setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+          setMediaTarget(updated);
+        }}
+      />
     </div>
   );
 }

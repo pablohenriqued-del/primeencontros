@@ -34,6 +34,7 @@ export default function Home() {
       if (bairro && bairro !== "all") params.bairro = bairro;
       if (q) params.q = q;
       if (coords) { params.lat = coords.lat; params.lng = coords.lng; }
+      if (verifiedOnly) params.verified_only = true;
       const { data } = await api.get("/massagistas", { params });
       setItems(data);
     } catch {

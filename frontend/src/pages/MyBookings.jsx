@@ -4,8 +4,9 @@ import { api, brl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, MapPin, Clock, Home } from "lucide-react";
+import { Calendar, MapPin, Clock, Home, Star } from "lucide-react";
 import { toast } from "sonner";
+import ReviewDialog from "@/components/ReviewDialog";
 
 const STATUS = {
   pending_payment: { label: "Aguardando pagamento", cls: "bg-amber-500/15 text-amber-300 border border-amber-500/30" },
@@ -17,15 +18,37 @@ export default function MyBookings() {
   const { user, loading: authLoading, login } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [reviewedIds, setReviewedIds] = useState(new Set());
+  const [target, setTarget] = useState(null);
   const navigate = useNavigate();
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/bookings/me");
+      setItems(data);
+      // For each confirmed booking, check if user already left a review (one per booking by user)
+      const confirmed = data.filter(b => b.status === "confirmed");
+      const reviewed = new Set();
+      await Promise.all(confirmed.map(async (b) => {
+        try {
+          const { data: rs } = await api.get(`/massagistas/${b.massagista_id}/reviews`);
+          if (rs.some(r => r.booking_id === b.id)) reviewed.add(b.id);
+        } catch {}
+      }));
+      setReviewedIds(reviewed);
+    } catch {
+      toast.error("Erro ao carregar suas reservas");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (authLoading) return;
     if (!user) { setLoading(false); return; }
-    api.get("/bookings/me")
-      .then(({ data }) => setItems(data))
-      .catch(() => toast.error("Erro ao carregar suas reservas"))
-      .finally(() => setLoading(false));
+    fetchData();
+    /* eslint-disable-next-line */
   }, [authLoading, user]);
 
   if (authLoading) return <div className="max-w-7xl mx-auto px-4 py-20 text-zinc-500">Carregando...</div>;
@@ -81,15 +104,38 @@ export default function MyBookings() {
                     <span className="inline-flex items-center gap-1.5"><Home className="h-4 w-4 text-zinc-500" /> {b.location_type === "studio" ? "No estúdio" : "Em domicílio"}</span>
                   </div>
                 </div>
-                <div className="text-right sm:ml-auto">
-                  <div className="text-xs text-zinc-500">Total</div>
-                  <div className="font-display text-xl font-semibold text-red-500">{brl(b.amount)}</div>
+                <div className="text-right sm:ml-auto flex flex-col items-end gap-2">
+                  <div>
+                    <div className="text-xs text-zinc-500">Total</div>
+                    <div className="font-display text-xl font-semibold text-red-500">{brl(b.amount)}</div>
+                  </div>
+                  {b.status === "confirmed" && !reviewedIds.has(b.id) && (
+                    <Button
+                      size="sm"
+                      data-testid={`review-${b.id}`}
+                      onClick={() => setTarget(b)}
+                      className="rounded-full bg-red-600 hover:bg-red-700 text-white text-xs h-8"
+                    >
+                      <Star className="h-3.5 w-3.5 mr-1" /> Avaliar
+                    </Button>
+                  )}
+                  {b.status === "confirmed" && reviewedIds.has(b.id) && (
+                    <span className="text-[11px] text-zinc-500 inline-flex items-center gap-1">
+                      <Star className="h-3 w-3 fill-amber-400 text-amber-400" /> Avaliada
+                    </span>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
       )}
+      <ReviewDialog
+        open={!!target}
+        booking={target}
+        onClose={() => setTarget(null)}
+        onSubmitted={() => fetchData()}
+      />
     </div>
   );
 }

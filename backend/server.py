@@ -203,6 +203,35 @@ class VerificationAction(BaseModel):
     notes: Optional[str] = None
 
 
+class ReviewCreate(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: Optional[str] = Field(default=None, max_length=600)
+
+
+class ProfileCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    bairro_slug: str
+    bio: str = Field(min_length=10, max_length=600)
+    specialties: List[str] = Field(min_length=1, max_length=8)
+    price_60: float = Field(gt=0)
+    price_90: Optional[float] = None
+    price_120: Optional[float] = None
+    experience_years: int = Field(ge=0, le=60)
+    languages: List[str] = Field(min_length=1)
+
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    bio: Optional[str] = None
+    specialties: Optional[List[str]] = None
+    price_60: Optional[float] = None
+    price_90: Optional[float] = None
+    price_120: Optional[float] = None
+    bairro_slug: Optional[str] = None
+    experience_years: Optional[int] = None
+    languages: Optional[List[str]] = None
+
+
 # ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
@@ -554,7 +583,11 @@ async def get_file(path: str):
     if not record:
         raise HTTPException(404, "Arquivo não encontrado")
     data, content_type = get_object(path)
-    return Response(content=data, media_type=record.get("content_type") or content_type)
+    headers = {
+        "Cache-Control": "public, max-age=86400, immutable",
+        "ETag": f'"{record["id"]}"',
+    }
+    return Response(content=data, media_type=record.get("content_type") or content_type, headers=headers)
 
 
 async def _admin_upload(admin: Dict[str, Any], mid: str, kind: str, file: UploadFile) -> Dict[str, Any]:
@@ -965,6 +998,267 @@ async def stripe_webhook(request: Request):
                     {"$set": {"status": "confirmed"}},
                 )
     return {"received": True}
+
+
+# ---------------------------------------------------------------------------
+# Reviews
+# ---------------------------------------------------------------------------
+@api.post("/bookings/{bid}/review")
+async def create_review(bid: str, payload: ReviewCreate, request: Request):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    booking = await db.bookings.find_one({"id": bid, "user_id": user["user_id"]}, {"_id": 0})
+    if not booking:
+        raise HTTPException(404, "Reserva não encontrada")
+    if booking["status"] != "confirmed":
+        raise HTTPException(400, "Só é possível avaliar reservas confirmadas")
+    existing = await db.reviews.find_one({"booking_id": bid}, {"_id": 0})
+    if existing:
+        raise HTTPException(400, "Você já avaliou esta reserva")
+
+    review = {
+        "id": f"r_{uuid.uuid4().hex[:10]}",
+        "booking_id": bid,
+        "massagista_id": booking["massagista_id"],
+        "user_id": user["user_id"],
+        "user_name": user.get("name", "Cliente"),
+        "user_picture": user.get("picture", ""),
+        "rating": int(payload.rating),
+        "comment": (payload.comment or "").strip() or None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.reviews.insert_one(dict(review))
+
+    # Update massagista aggregate rating
+    m = await db.massagistas.find_one({"id": booking["massagista_id"]}, {"_id": 0})
+    if m:
+        old_count = int(m.get("reviews", 0))
+        old_rating = float(m.get("rating", 0.0))
+        new_count = old_count + 1
+        new_rating = round((old_rating * old_count + review["rating"]) / new_count, 2)
+        await db.massagistas.update_one(
+            {"id": booking["massagista_id"]},
+            {"$set": {"reviews": new_count, "rating": new_rating}},
+        )
+
+    return review
+
+
+@api.get("/massagistas/{mid}/reviews")
+async def list_reviews(mid: str, limit: int = Query(20, le=100)):
+    docs = await db.reviews.find({"massagista_id": mid}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return docs
+
+
+# ---------------------------------------------------------------------------
+# Professional self-service (autocadastro)
+# ---------------------------------------------------------------------------
+async def _require_owner(request: Request, mid: str) -> Dict[str, Any]:
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Perfil não encontrado")
+    if m.get("owner_user_id") != user["user_id"] and not user.get("is_admin"):
+        raise HTTPException(403, "Sem permissão")
+    return user
+
+
+@api.get("/me/profile")
+async def my_profile(request: Request):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    doc = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    return {"profile": doc}
+
+
+@api.post("/me/profile")
+async def create_my_profile(payload: ProfileCreate, request: Request):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    existing = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    if existing:
+        raise HTTPException(400, "Você já tem um perfil profissional")
+    b = BAIRRO_MAP.get(payload.bairro_slug)
+    if not b:
+        raise HTTPException(400, "Bairro inválido")
+    price_60 = float(payload.price_60)
+    doc = {
+        "id": f"m_{uuid.uuid4().hex[:10]}",
+        "owner_user_id": user["user_id"],
+        "name": payload.name,
+        "bairro": b.name,
+        "bairro_slug": b.slug,
+        "lat": b.lat,
+        "lng": b.lng,
+        "rating": 0.0,
+        "reviews": 0,
+        "bio": payload.bio,
+        "specialties": payload.specialties,
+        "hourly_rate": price_60,
+        "price_60": price_60,
+        "price_90": float(payload.price_90) if payload.price_90 else round(price_60 * 1.4, 2),
+        "price_120": float(payload.price_120) if payload.price_120 else round(price_60 * 1.8, 2),
+        "main_image": user.get("picture", ""),
+        "gallery": [user.get("picture")] if user.get("picture") else [],
+        "video_url": "",
+        "video_thumb": "",
+        "experience_years": int(payload.experience_years),
+        "languages": payload.languages,
+        "verified": False,
+        "verification": {
+            "status": "pending",
+            "id_check": False,
+            "photo_check": False,
+            "address_check": False,
+            "verified_at": None,
+            "verified_by": None,
+            "notes": "Auto-cadastrado — aguardando verificação",
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.massagistas.insert_one(dict(doc))
+    return doc
+
+
+@api.put("/me/profile")
+async def update_my_profile(payload: ProfileUpdate, request: Request):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    existing = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Perfil não encontrado")
+
+    update: Dict[str, Any] = {}
+    data = payload.model_dump(exclude_unset=True)
+    for k in ("name", "bio", "specialties", "experience_years", "languages"):
+        if k in data:
+            update[k] = data[k]
+    if "bairro_slug" in data:
+        b = BAIRRO_MAP.get(data["bairro_slug"])
+        if not b:
+            raise HTTPException(400, "Bairro inválido")
+        update.update({"bairro": b.name, "bairro_slug": b.slug, "lat": b.lat, "lng": b.lng})
+    if "price_60" in data:
+        update["price_60"] = float(data["price_60"])
+        update["hourly_rate"] = float(data["price_60"])
+    if "price_90" in data:
+        update["price_90"] = float(data["price_90"])
+    if "price_120" in data:
+        update["price_120"] = float(data["price_120"])
+
+    if update:
+        await db.massagistas.update_one({"id": existing["id"]}, {"$set": update})
+    fresh = await db.massagistas.find_one({"id": existing["id"]}, {"_id": 0})
+    return fresh
+
+
+@api.post("/me/profile/photo")
+async def my_profile_photo(request: Request, file: UploadFile = File(...)):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Crie seu perfil primeiro")
+    f = await _admin_upload({"email": user["email"]}, m["id"], "image", file)
+    url = f["url"]
+    update = {"$push": {"gallery": url}}
+    # If no real main image yet (or pointing at google picture), set this as main
+    if not m.get("main_image") or m["main_image"] == user.get("picture"):
+        update["$set"] = {"main_image": url}
+    await db.massagistas.update_one({"id": m["id"]}, update)
+    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+    return {"url": url, "massagista": fresh}
+
+
+@api.delete("/me/profile/photo")
+async def my_delete_photo(request: Request, url: str = Body(..., embed=True)):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Perfil não encontrado")
+    await db.massagistas.update_one({"id": m["id"]}, {"$pull": {"gallery": url}})
+    if m.get("main_image") == url:
+        remaining = [g for g in m.get("gallery", []) if g != url]
+        await db.massagistas.update_one({"id": m["id"]}, {"$set": {"main_image": remaining[0] if remaining else ""}})
+    if "/api/files/" in url:
+        storage_path = url.split("/api/files/", 1)[1]
+        await db.files.update_one(
+            {"storage_path": storage_path},
+            {"$set": {"is_deleted": True, "deleted_by": user["email"], "deleted_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+    return {"ok": True, "massagista": fresh}
+
+
+@api.post("/me/profile/set-main")
+async def my_set_main(request: Request, url: str = Body(..., embed=True)):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Perfil não encontrado")
+    if url not in (m.get("gallery") or []):
+        raise HTTPException(400, "URL precisa estar na galeria primeiro")
+    await db.massagistas.update_one({"id": m["id"]}, {"$set": {"main_image": url}})
+    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+    return {"ok": True, "massagista": fresh}
+
+
+@api.post("/me/profile/video")
+async def my_profile_video(request: Request, file: UploadFile = File(...)):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Crie seu perfil primeiro")
+    f = await _admin_upload({"email": user["email"]}, m["id"], "video", file)
+    url = f["url"]
+    prev = m.get("video_url", "")
+    if prev and "/api/files/" in prev:
+        sp = prev.split("/api/files/", 1)[1]
+        await db.files.update_one({"storage_path": sp}, {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}})
+    await db.massagistas.update_one({"id": m["id"]}, {"$set": {"video_url": url}})
+    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+    return {"url": url, "massagista": fresh}
+
 
 
 # ---------------------------------------------------------------------------

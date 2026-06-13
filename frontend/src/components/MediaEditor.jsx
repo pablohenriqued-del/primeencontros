@@ -15,7 +15,7 @@ function resolveUrl(u) {
   return `${root}${u}`;
 }
 
-export default function MediaEditor({ open, massagista, onClose, onUpdated }) {
+export default function MediaEditor({ open, massagista, onClose, onUpdated, owner = false }) {
   const [m, setM] = useState(massagista);
   const [tab, setTab] = useState("photos");
   const [uploading, setUploading] = useState(false);
@@ -26,6 +26,14 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated }) {
   useEffect(() => { setM(massagista); }, [massagista]);
 
   if (!m) return null;
+
+  const paths = owner
+    ? { photo: `/me/profile/photo`, setMain: `/me/profile/set-main`, video: `/me/profile/video` }
+    : {
+        photo: `/admin/massagistas/${m.id}/photo`,
+        setMain: `/admin/massagistas/${m.id}/set-main`,
+        video: `/admin/massagistas/${m.id}/video`,
+      };
 
   const refresh = async () => {
     try {
@@ -45,9 +53,7 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated }) {
     try {
       const form = new FormData();
       form.append("file", file);
-      const path = kind === "photo"
-        ? `/admin/massagistas/${m.id}/photo`
-        : `/admin/massagistas/${m.id}/video`;
+      const path = kind === "photo" ? paths.photo : paths.video;
       const { data } = await api.post(path, form, {
         headers: { "Content-Type": "multipart/form-data" },
         onUploadProgress: (e) => {
@@ -71,7 +77,7 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated }) {
   const removePhoto = async (url) => {
     if (!window.confirm("Remover esta foto da galeria?")) return;
     try {
-      const { data } = await api.delete(`/admin/massagistas/${m.id}/photo`, { data: { url } });
+      const { data } = await api.delete(paths.photo, { data: { url } });
       setM(data.massagista);
       onUpdated?.(data.massagista);
       toast.success("Foto removida");
@@ -82,7 +88,7 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated }) {
 
   const setAsMain = async (url) => {
     try {
-      const { data } = await api.post(`/admin/massagistas/${m.id}/set-main`, { url });
+      const { data } = await api.post(paths.setMain, { url });
       setM(data.massagista);
       onUpdated?.(data.massagista);
       toast.success("Imagem principal atualizada");

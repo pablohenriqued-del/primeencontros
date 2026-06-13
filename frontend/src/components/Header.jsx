@@ -6,7 +6,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { Flame, CalendarCheck, LogOut, User as UserIcon, ShieldCheck } from "lucide-react";
+import { Flame, CalendarCheck, LogOut, User as UserIcon, ShieldCheck, Briefcase } from "lucide-react";
 
 export default function Header() {
   const { user, login, logout } = useAuth();
@@ -32,6 +32,11 @@ export default function Header() {
           {user && (
             <Link to="/minhas-reservas" className="hover:text-red-500 transition-colors" data-testid="nav-bookings">
               Minhas reservas
+            </Link>
+          )}
+          {user && (
+            <Link to="/sou-profissional" className="hover:text-red-500 transition-colors" data-testid="nav-pro">
+              Sou profissional
             </Link>
           )}
           {user?.is_admin && (
@@ -66,6 +71,9 @@ export default function Header() {
                 <DropdownMenuSeparator className="bg-zinc-800" />
                 <DropdownMenuItem data-testid="menu-my-bookings" onClick={() => navigate("/minhas-reservas")} className="focus:bg-zinc-900 focus:text-red-400">
                   <CalendarCheck className="h-4 w-4 mr-2" /> Minhas reservas
+                </DropdownMenuItem>
+                <DropdownMenuItem data-testid="menu-pro" onClick={() => navigate("/sou-profissional")} className="focus:bg-zinc-900 focus:text-red-400">
+                  <Briefcase className="h-4 w-4 mr-2" /> Sou profissional
                 </DropdownMenuItem>
                 {user.is_admin && (
                   <DropdownMenuItem data-testid="menu-admin" onClick={() => navigate("/admin")} className="focus:bg-zinc-900 focus:text-red-400">

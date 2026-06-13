@@ -7,8 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
-import { MapPin, Star, Search, Navigation, Clock, Heart, Flame, ShieldCheck } from "lucide-react";
+import { MapPin, Star, Search, Navigation, Clock, Heart, Flame, ShieldCheck, List, Map as MapIcon } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import MapView from "@/components/MapView";
 import { toast } from "sonner";
 
 const HERO_BG = "https://images.unsplash.com/photo-1679957631642-94f406206544?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwzfHxyaW8lMjBkZSUyMGphbmVpcm8lMjBpcGFuZW1hJTIwbGFuZHNjYXBlfGVufDB8fHx8MTc4MTMxMTk3NXww&ixlib=rb-4.1.0&q=85";
@@ -22,6 +23,7 @@ export default function Home() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [locating, setLocating] = useState(false);
+  const [view, setView] = useState("list");
 
   useEffect(() => {
     api.get("/bairros").then(({ data }) => setBairros(data));
@@ -144,16 +146,34 @@ export default function Home() {
               {items.length} {items.length === 1 ? "profissional" : "profissionais"} disponíveis agora
             </p>
           </div>
-          <label className="flex items-center gap-2.5 bg-zinc-950 border border-zinc-900 rounded-full px-4 py-2 cursor-pointer hover:border-red-600/40 transition-colors" data-testid="verified-only-toggle-label">
-            <ShieldCheck className="h-4 w-4 text-red-500" />
-            <span className="text-sm text-zinc-200">Apenas verificadas</span>
-            <Switch
-              data-testid="verified-only-toggle"
-              checked={verifiedOnly}
-              onCheckedChange={setVerifiedOnly}
-              className="data-[state=checked]:bg-red-600"
-            />
-          </label>
+          <div className="flex items-center gap-2">
+            <div className="inline-flex bg-zinc-950 border border-zinc-900 rounded-full p-1" data-testid="view-toggle">
+              <button
+                onClick={() => setView("list")}
+                data-testid="view-list"
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors ${view === "list" ? "bg-red-600 text-white" : "text-zinc-400 hover:text-zinc-200"}`}
+              >
+                <List className="h-4 w-4" /> Lista
+              </button>
+              <button
+                onClick={() => setView("map")}
+                data-testid="view-map"
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors ${view === "map" ? "bg-red-600 text-white" : "text-zinc-400 hover:text-zinc-200"}`}
+              >
+                <MapIcon className="h-4 w-4" /> Mapa
+              </button>
+            </div>
+            <label className="flex items-center gap-2.5 bg-zinc-950 border border-zinc-900 rounded-full px-4 py-2 cursor-pointer hover:border-red-600/40 transition-colors" data-testid="verified-only-toggle-label">
+              <ShieldCheck className="h-4 w-4 text-red-500" />
+              <span className="text-sm text-zinc-200">Apenas verificadas</span>
+              <Switch
+                data-testid="verified-only-toggle"
+                checked={verifiedOnly}
+                onCheckedChange={setVerifiedOnly}
+                className="data-[state=checked]:bg-red-600"
+              />
+            </label>
+          </div>
         </div>
 
         {loading ? (
@@ -164,6 +184,12 @@ export default function Home() {
           </div>
         ) : items.length === 0 ? (
           <div className="text-center py-20 text-zinc-500">Nenhuma profissional encontrada — tente outro filtro.</div>
+        ) : view === "map" ? (
+          <MapView
+            items={items}
+            center={coords ? [coords.lat, coords.lng] : [-22.9711, -43.1822]}
+            zoom={coords ? 13 : 12}
+          />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
             {items.map((m, i) => (

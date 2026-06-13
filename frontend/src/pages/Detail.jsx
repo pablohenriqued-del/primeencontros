@@ -21,6 +21,7 @@ export default function Detail() {
   const navigate = useNavigate();
   const { user, login } = useAuth();
   const [m, setM] = useState(null);
+  const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [videoOpen, setVideoOpen] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -39,6 +40,7 @@ export default function Detail() {
       toast.error("Profissional não encontrada");
       navigate("/");
     }).finally(() => setLoading(false));
+    api.get(`/massagistas/${id}/reviews`).then(({ data }) => setReviews(data)).catch(() => {});
   }, [id, navigate]);
 
   if (loading || !m) {
@@ -168,10 +170,40 @@ export default function Detail() {
                 ))}
               </div>
             </TabsContent>
-            <TabsContent value="avaliacoes" className="mt-6 text-zinc-300">
-              <div className="text-sm text-zinc-400">
-                {m.reviews} avaliações com média de {m.rating.toFixed(1)} estrelas. Atendimento pontual, profissional e acolhedor — segundo nossos clientes verificados.
-              </div>
+            <TabsContent value="avaliacoes" className="mt-6">
+              {reviews.length === 0 ? (
+                <div className="text-sm text-zinc-400">
+                  {m.reviews > 0
+                    ? `${m.reviews} avaliações com média de ${m.rating.toFixed(1)} estrelas. Atendimento pontual, profissional e acolhedor — segundo nossos clientes verificados.`
+                    : "Ainda sem avaliações públicas. Seja o primeiro!"}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {reviews.map((r) => (
+                    <div key={r.id} data-testid={`review-${r.id}`} className="rounded-2xl border border-zinc-900 bg-zinc-950 p-4">
+                      <div className="flex items-center gap-3">
+                        {r.user_picture ? (
+                          <img src={r.user_picture} alt="" className="h-9 w-9 rounded-full object-cover" />
+                        ) : (
+                          <div className="h-9 w-9 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-sm font-semibold">
+                            {(r.user_name || "?")[0]}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-zinc-200 font-medium">{r.user_name}</div>
+                          <div className="text-[11px] text-zinc-500">{new Date(r.created_at).toLocaleDateString("pt-BR")}</div>
+                        </div>
+                        <div className="flex items-center gap-0.5">
+                          {[1,2,3,4,5].map(n => (
+                            <Star key={n} className={`h-3.5 w-3.5 ${n <= r.rating ? "fill-amber-400 text-amber-400" : "text-zinc-700"}`} />
+                          ))}
+                        </div>
+                      </div>
+                      {r.comment && <p className="text-sm text-zinc-300 mt-3 leading-relaxed">{r.comment}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </TabsContent>
             <TabsContent value="verificacao" className="mt-6">
               <div className="rounded-2xl border border-zinc-900 bg-zinc-950 p-5">

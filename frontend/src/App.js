@@ -7,6 +7,7 @@ import Detail from "@/pages/Detail";
 import MyBookings from "@/pages/MyBookings";
 import AuthCallback from "@/pages/AuthCallback";
 import CheckoutSuccess from "@/pages/CheckoutSuccess";
+import Admin from "@/pages/Admin";
 import { Toaster } from "@/components/ui/sonner";
 
 function AppRouter() {
@@ -21,6 +22,7 @@ function AppRouter() {
       <Route path="/massagista/:id" element={<Detail />} />
       <Route path="/minhas-reservas" element={<MyBookings />} />
       <Route path="/checkout/success" element={<CheckoutSuccess />} />
+      <Route path="/admin" element={<Admin />} />
       <Route path="*" element={<Home />} />
     </Routes>
   );

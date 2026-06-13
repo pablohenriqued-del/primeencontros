@@ -1,0 +1,47 @@
+{
+  "summary": "Verification flow end-to-end testing. Backend: all 12 pytest cases pass (public listing with verified-first sort, verified_only filter, detail payload contains verification block, admin auth 401/403/200, queue=4, approve/reject/revoke mutate state correctly, 404 for unknown id). Frontend: 8/9 Playwright assertions pass (Home shows 8 red 'Verificada' badges on cards, Detail shows badge + 'Verificação' tab with 3 checks + 'Profissional verificada' header for verified pro, Admin route correctly gates by auth (Acesso restrito / Acesso negado / queue), admin tabs Fila=4 + Todas=12 + 8 revoke buttons, header shows nav-admin link for admin user). One frontend BUG: the 'Apenas verificadas' toggle does NOT filter the list because Home.jsx fetchList() never sends verified_only=true even though the verifiedOnly state changes triggers a refetch.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Home → 'Apenas verificadas' toggle",
+        "issue": "Toggling data-testid='verified-only-toggle' to ON does not filter results. UI badge counter still says '12 profissionais', and a network listener confirmed the outgoing request is GET /api/massagistas with NO 'verified_only' query param. The verifiedOnly React state is referenced in the useEffect dependency array but is missing from the params object built inside fetchList().",
+        "affected_selectors": ["[data-testid='verified-only-toggle']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_verification.py",
+    "/app/test_reports/pytest/verification_results.xml"
+  ],
+  "action_items": [
+    "FIX /app/frontend/src/pages/Home.jsx fetchList(): add `if (verifiedOnly) params.verified_only = true;` so the toggle actually filters the API call. Backend already supports verified_only=true."
+  ],
+  "critical_code_review_comments": [
+    "server.py: ADMIN_EMAILS bootstrap is a clean approach; first-user fallback works as designed (verified by direct DB inspection — non-admin token gets 403, admin token gets 200).",
+    "server.py /api/massagistas verified-first sort uses a stable sort key (not x.verified, then -rating) — correct, verified always float to top.",
+    "server.py approve/reject/revoke endpoints correctly stamp verified_by from the admin user (not from request payload) — prevents impersonation. Good.",
+    "server.py: revoke sets verification.verified_by = admin email but status='pending', which is slightly inconsistent (verified_by suggests an action by admin, but verified_at is null). Cosmetic only.",
+    "Admin.jsx: revoke uses window.confirm() — works but jarring vs the rest of the Dialog-based UX. Optional polish.",
+    "Home.jsx: verifiedOnly state is wired to the useEffect deps but missing from fetchList params (the bug above). Trivial 1-line fix.",
+    "Detail.jsx: 'Verificação' tab correctly maps the 3 boolean checks with red shield-check icons when true and muted text when false."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_verification.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 pytest passed)",
+    "frontend": "89% (8/9 assertions passed — 1 functional bug: verified-only toggle does not filter)"
+  },
+  "test_credentials": "Admin Bearer token (created in MongoDB for this run): test_admin_token_1781314522749 (user qa-admin+1781314522749@oasisrio.test, is_admin=true). Non-admin Bearer token: test_nonadmin_token_1781314522758. Both still present in user_sessions for re-use; expires in 7 days.",
+  "seed_data_creation": "Created 2 users + 2 sessions in MongoDB to exercise admin auth path (1 admin, 1 regular). Distribution restored to 8 verified + 4 pending after destructive mutation tests, ready for demo.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: REACT_APP_BACKEND_URL env (https://stupefied-gauss-5.preview.emergentagent.com). Admin Bearer token=test_admin_token_1781314522749, non-admin Bearer token=test_nonadmin_token_1781314522758. To run backend regression: `ADMIN_TOKEN=test_admin_token_1781314522749 NONADMIN_TOKEN=test_nonadmin_token_1781314522758 python -m pytest /app/backend/tests/test_verification.py -v`. For UI testing inject token via add_init_script BEFORE any goto (use page.add_init_script with localStorage.setItem('oasis_token', TOKEN)). Set viewport to 1920x1080. The detail page first card is always a verified pro because list is sorted verified-first. Current DB distribution: 8 verified, 4 pending.",
+  "rca of the issue": "Bug RCA — 'Apenas verificadas' toggle inert: In /app/frontend/src/pages/Home.jsx the fetchList() function builds params from {bairro, q, coords} only; it never reads the verifiedOnly state. Even though useEffect([bairro, coords, verifiedOnly]) re-fires fetchList on toggle change, the resulting GET to /api/massagistas omits the verified_only query string, so the backend returns all 12 docs. Fix: add `if (verifiedOnly) params.verified_only = true;` inside fetchList. Reproduction: load Home → flip toggle ON → DevTools Network shows /api/massagistas (no params) instead of /api/massagistas?verified_only=true; card grid stays at 12. Verified via Playwright network listener — only URL captured was /api/massagistas (no query)."
+}

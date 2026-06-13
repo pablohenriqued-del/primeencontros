@@ -10,7 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Star, MapPin, Clock, ChevronLeft, Play, Languages, Award, Sparkles } from "lucide-react";
+import { Star, MapPin, Clock, ChevronLeft, Play, Languages, Award, Sparkles, ShieldCheck, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -120,6 +120,15 @@ export default function Detail() {
           {/* Header info */}
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-3">
+              {m.verified ? (
+                <Badge data-testid="verified-badge" className="bg-red-600 text-white hover:bg-red-700 rounded-full border-0 shadow-[0_0_12px_rgba(220,38,38,0.6)]">
+                  <ShieldCheck className="h-3 w-3 mr-1" /> Verificada
+                </Badge>
+              ) : (
+                <Badge className="bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-full">
+                  <ShieldAlert className="h-3 w-3 mr-1" /> Não verificada
+                </Badge>
+              )}
               <Badge className="bg-red-600/15 text-red-400 hover:bg-red-600/20 border border-red-600/40 rounded-full">
                 <MapPin className="h-3 w-3 mr-1" /> {m.bairro}
               </Badge>
@@ -145,6 +154,7 @@ export default function Detail() {
               <TabsTrigger value="sobre" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-sobre">Sobre</TabsTrigger>
               <TabsTrigger value="especialidades" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-specs">Especialidades</TabsTrigger>
               <TabsTrigger value="avaliacoes" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-reviews">Avaliações</TabsTrigger>
+              <TabsTrigger value="verificacao" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-verification">Verificação</TabsTrigger>
             </TabsList>
             <TabsContent value="sobre" className="mt-6 text-zinc-300 leading-relaxed">
               <p>{m.bio}</p>
@@ -161,6 +171,59 @@ export default function Detail() {
             <TabsContent value="avaliacoes" className="mt-6 text-zinc-300">
               <div className="text-sm text-zinc-400">
                 {m.reviews} avaliações com média de {m.rating.toFixed(1)} estrelas. Atendimento pontual, profissional e acolhedor — segundo nossos clientes verificados.
+              </div>
+            </TabsContent>
+            <TabsContent value="verificacao" className="mt-6">
+              <div className="rounded-2xl border border-zinc-900 bg-zinc-950 p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  {m.verified ? (
+                    <>
+                      <div className="h-10 w-10 rounded-full bg-red-600 flex items-center justify-center shadow-[0_0_20px_rgba(220,38,38,0.5)]">
+                        <ShieldCheck className="h-5 w-5 text-white" />
+                      </div>
+                      <div>
+                        <div className="font-display text-lg font-semibold text-zinc-50">Profissional verificada</div>
+                        <div className="text-xs text-zinc-500">
+                          {m.verification?.verified_at && (
+                            <>Verificada em {new Date(m.verification.verified_at).toLocaleDateString("pt-BR")}</>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="h-10 w-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                        <ShieldAlert className="h-5 w-5 text-amber-400" />
+                      </div>
+                      <div>
+                        <div className="font-display text-lg font-semibold text-zinc-50">Verificação pendente</div>
+                        <div className="text-xs text-zinc-500">A profissional ainda passará pela checagem oficial.</div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {[
+                    { k: "id_check", label: "Documento de identidade conferido" },
+                    { k: "photo_check", label: "Foto recente bate com o perfil" },
+                    { k: "address_check", label: "Endereço de atendimento confirmado" },
+                  ].map((c) => {
+                    const ok = !!m.verification?.[c.k];
+                    return (
+                      <div key={c.k} className="flex items-center gap-3 rounded-xl border border-zinc-900 bg-black px-3 py-2.5">
+                        {ok ? (
+                          <ShieldCheck className="h-4 w-4 text-red-500 shrink-0" />
+                        ) : (
+                          <ShieldAlert className="h-4 w-4 text-zinc-600 shrink-0" />
+                        )}
+                        <span className={`text-sm ${ok ? "text-zinc-200" : "text-zinc-500"}`}>{c.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-zinc-500 mt-4 leading-relaxed">
+                  O selo de verificação é concedido após checagem manual da equipe Prime Encontros. Profissionais verificadas têm prioridade nos resultados e badge especial no perfil.
+                </p>
               </div>
             </TabsContent>
           </Tabs>

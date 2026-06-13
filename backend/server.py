@@ -37,6 +37,7 @@ db = client[os.environ["DB_NAME"]]
 
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
 EMERGENT_AUTH_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
 
 # ---------------------------------------------------------------------------
 # App
@@ -115,6 +116,13 @@ class Booking(BaseModel):
 class CheckoutCreateReq(BaseModel):
     booking_id: str
     origin_url: str
+
+
+class VerificationAction(BaseModel):
+    id_check: bool = True
+    photo_check: bool = True
+    address_check: bool = True
+    notes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -217,10 +225,37 @@ async def seed_massagistas():
             "video_thumb": SPA1,
             "experience_years": exp,
             "languages": langs,
+            "verified": i < 8,  # first 8 are pre-verified for demo
+            "verification": {
+                "status": "verified" if i < 8 else "pending",
+                "id_check": i < 8,
+                "photo_check": i < 8,
+                "address_check": i < 8,
+                "verified_at": datetime.now(timezone.utc).isoformat() if i < 8 else None,
+                "verified_by": "system_seed" if i < 8 else None,
+            },
         }
         docs.append(m)
     await db.massagistas.insert_many(docs)
     logger.info(f"Seeded {len(docs)} massagistas")
+
+
+async def migrate_massagistas():
+    """Backfill verification fields on existing seed docs."""
+    await db.massagistas.update_many(
+        {"verified": {"$exists": False}},
+        {"$set": {
+            "verified": False,
+            "verification": {
+                "status": "pending",
+                "id_check": False,
+                "photo_check": False,
+                "address_check": False,
+                "verified_at": None,
+                "verified_by": None,
+            },
+        }},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -292,10 +327,13 @@ async def list_massagistas(
     lat: Optional[float] = Query(None),
     lng: Optional[float] = Query(None),
     q: Optional[str] = Query(None),
+    verified_only: bool = Query(False),
 ):
     query: Dict[str, Any] = {}
     if bairro:
         query["bairro_slug"] = bairro
+    if verified_only:
+        query["verified"] = True
     if q:
         query["$or"] = [
             {"name": {"$regex": q, "$options": "i"}},
@@ -308,7 +346,8 @@ async def list_massagistas(
             d["distance_km"] = round(haversine_km(lat, lng, d["lat"], d["lng"]), 2)
         docs.sort(key=lambda x: x["distance_km"])
     else:
-        docs.sort(key=lambda x: -x.get("rating", 0))
+        # Sort: verified first, then rating desc
+        docs.sort(key=lambda x: (not x.get("verified", False), -x.get("rating", 0)))
     return docs
 
 
@@ -318,6 +357,107 @@ async def get_massagista(mid: str):
     if not doc:
         raise HTTPException(404, "Massagista não encontrada")
     return doc
+
+
+# ---------------------------------------------------------------------------
+# Admin (verification)
+# ---------------------------------------------------------------------------
+async def require_admin(request: Request) -> Dict[str, Any]:
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    return user
+
+
+@api.get("/admin/verification/queue")
+async def verification_queue(request: Request):
+    await require_admin(request)
+    docs = await db.massagistas.find(
+        {"$or": [{"verified": False}, {"verified": {"$exists": False}}]},
+        {"_id": 0},
+    ).to_list(500)
+    return docs
+
+
+@api.get("/admin/verification/all")
+async def verification_all(request: Request):
+    await require_admin(request)
+    docs = await db.massagistas.find({}, {"_id": 0}).to_list(500)
+    docs.sort(key=lambda x: (x.get("verified", False), x["name"]))
+    return docs
+
+
+@api.post("/admin/verification/{mid}/approve")
+async def approve_verification(mid: str, payload: VerificationAction, request: Request):
+    admin = await require_admin(request)
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    verification = {
+        "status": "verified",
+        "id_check": payload.id_check,
+        "photo_check": payload.photo_check,
+        "address_check": payload.address_check,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "verified_by": admin["email"],
+        "notes": payload.notes,
+    }
+    await db.massagistas.update_one(
+        {"id": mid},
+        {"$set": {"verified": True, "verification": verification}},
+    )
+    return {"ok": True, "verification": verification}
+
+
+@api.post("/admin/verification/{mid}/reject")
+async def reject_verification(mid: str, payload: VerificationAction, request: Request):
+    admin = await require_admin(request)
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    verification = {
+        "status": "rejected",
+        "id_check": payload.id_check,
+        "photo_check": payload.photo_check,
+        "address_check": payload.address_check,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "verified_by": admin["email"],
+        "notes": payload.notes,
+    }
+    await db.massagistas.update_one(
+        {"id": mid},
+        {"$set": {"verified": False, "verification": verification}},
+    )
+    return {"ok": True, "verification": verification}
+
+
+@api.post("/admin/verification/{mid}/revoke")
+async def revoke_verification(mid: str, request: Request):
+    admin = await require_admin(request)
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    await db.massagistas.update_one(
+        {"id": mid},
+        {"$set": {
+            "verified": False,
+            "verification": {
+                "status": "pending",
+                "id_check": False,
+                "photo_check": False,
+                "address_check": False,
+                "verified_at": None,
+                "verified_by": admin["email"],
+                "notes": "Revogada para nova verificação",
+            },
+        }},
+    )
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -341,20 +481,28 @@ async def auth_session(request: Request, response: Response):
 
     # Upsert user
     user = await db.users.find_one({"email": email}, {"_id": 0})
+    is_admin_env = email.lower() in ADMIN_EMAILS
     if not user:
+        # First-ever user becomes admin automatically (bootstrap),
+        # or any email in ADMIN_EMAILS env var
+        total_users = await db.users.count_documents({})
+        is_admin = is_admin_env or total_users == 0
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         user = {
             "user_id": user_id,
             "email": email,
             "name": name,
             "picture": picture,
+            "is_admin": is_admin,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.users.insert_one(dict(user))
     else:
-        await db.users.update_one({"email": email}, {"$set": {"name": name, "picture": picture}})
-        user["name"] = name
-        user["picture"] = picture
+        update = {"name": name, "picture": picture}
+        if is_admin_env and not user.get("is_admin"):
+            update["is_admin"] = True
+        await db.users.update_one({"email": email}, {"$set": update})
+        user.update(update)
 
     # Persist session
     expires = datetime.now(timezone.utc) + timedelta(days=7)
@@ -634,6 +782,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     await seed_massagistas()
+    await migrate_massagistas()
 
 
 @app.on_event("shutdown")

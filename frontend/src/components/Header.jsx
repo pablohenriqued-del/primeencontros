@@ -6,7 +6,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { Flame, CalendarCheck, LogOut, User as UserIcon } from "lucide-react";
+import { Flame, CalendarCheck, LogOut, User as UserIcon, ShieldCheck } from "lucide-react";
 
 export default function Header() {
   const { user, login, logout } = useAuth();
@@ -32,6 +32,11 @@ export default function Header() {
           {user && (
             <Link to="/minhas-reservas" className="hover:text-red-500 transition-colors" data-testid="nav-bookings">
               Minhas reservas
+            </Link>
+          )}
+          {user?.is_admin && (
+            <Link to="/admin" className="inline-flex items-center gap-1.5 text-red-500 hover:text-red-400 transition-colors" data-testid="nav-admin">
+              <ShieldCheck className="h-4 w-4" /> Admin
             </Link>
           )}
         </nav>
@@ -62,6 +67,11 @@ export default function Header() {
                 <DropdownMenuItem data-testid="menu-my-bookings" onClick={() => navigate("/minhas-reservas")} className="focus:bg-zinc-900 focus:text-red-400">
                   <CalendarCheck className="h-4 w-4 mr-2" /> Minhas reservas
                 </DropdownMenuItem>
+                {user.is_admin && (
+                  <DropdownMenuItem data-testid="menu-admin" onClick={() => navigate("/admin")} className="focus:bg-zinc-900 focus:text-red-400">
+                    <ShieldCheck className="h-4 w-4 mr-2" /> Painel Admin
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem data-testid="menu-profile" disabled>
                   <UserIcon className="h-4 w-4 mr-2" /> Meu perfil
                 </DropdownMenuItem>

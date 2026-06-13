@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
-import { MapPin, Star, Search, Navigation, Clock, Heart, Flame } from "lucide-react";
+import { MapPin, Star, Search, Navigation, Clock, Heart, Flame, ShieldCheck } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 
 const HERO_BG = "https://images.unsplash.com/photo-1679957631642-94f406206544?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwzfHxyaW8lMjBkZSUyMGphbmVpcm8lMjBpcGFuZW1hJTIwbGFuZHNjYXBlfGVufDB8fHx8MTc4MTMxMTk3NXww&ixlib=rb-4.1.0&q=85";
@@ -17,6 +18,7 @@ export default function Home() {
   const [bairro, setBairro] = useState("all");
   const [q, setQ] = useState("");
   const [coords, setCoords] = useState(null);
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [locating, setLocating] = useState(false);
@@ -41,7 +43,7 @@ export default function Home() {
     }
   };
 
-  useEffect(() => { fetchList(); /* eslint-disable-next-line */ }, [bairro, coords]);
+  useEffect(() => { fetchList(); /* eslint-disable-next-line */ }, [bairro, coords, verifiedOnly]);
 
   const useMyLocation = () => {
     if (!navigator.geolocation) { toast.error("Geolocalização indisponível"); return; }
@@ -132,7 +134,7 @@ export default function Home() {
 
       {/* Results */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-16">
-        <div className="flex items-end justify-between mb-8">
+        <div className="flex items-end justify-between mb-8 flex-wrap gap-4">
           <div>
             <h2 className="font-display text-2xl sm:text-3xl font-medium tracking-tight text-zinc-50">
               {coords ? "Mais perto de você" : bairro !== "all" ? `Profissionais em ${bairros.find(b => b.slug === bairro)?.name}` : "Profissionais em destaque"}
@@ -141,6 +143,16 @@ export default function Home() {
               {items.length} {items.length === 1 ? "profissional" : "profissionais"} disponíveis agora
             </p>
           </div>
+          <label className="flex items-center gap-2.5 bg-zinc-950 border border-zinc-900 rounded-full px-4 py-2 cursor-pointer hover:border-red-600/40 transition-colors" data-testid="verified-only-toggle-label">
+            <ShieldCheck className="h-4 w-4 text-red-500" />
+            <span className="text-sm text-zinc-200">Apenas verificadas</span>
+            <Switch
+              data-testid="verified-only-toggle"
+              checked={verifiedOnly}
+              onCheckedChange={setVerifiedOnly}
+              className="data-[state=checked]:bg-red-600"
+            />
+          </label>
         </div>
 
         {loading ? (
@@ -172,8 +184,13 @@ export default function Home() {
                     <Badge className="bg-black/70 backdrop-blur text-zinc-100 hover:bg-black/80 rounded-full px-2.5 py-0.5 text-xs font-medium border border-zinc-800">
                       <MapPin className="h-3 w-3 mr-1" /> {m.bairro}
                     </Badge>
+                    {m.verified && (
+                      <Badge data-testid={`verified-badge-${m.id}`} className="bg-red-600 text-white hover:bg-red-700 rounded-full px-2.5 py-0.5 text-xs font-medium border-0 shadow-[0_0_12px_rgba(220,38,38,0.6)] animate-pulse">
+                        <ShieldCheck className="h-3 w-3 mr-1" /> Verificada
+                      </Badge>
+                    )}
                     {m.distance_km !== undefined && (
-                      <Badge className="bg-red-600 text-white hover:bg-red-700 rounded-full px-2.5 py-0.5 text-xs font-medium border-0">
+                      <Badge className="bg-zinc-900/90 text-zinc-100 hover:bg-zinc-900 rounded-full px-2.5 py-0.5 text-xs font-medium border border-zinc-800">
                         {m.distance_km < 1 ? `${Math.round(m.distance_km * 1000)} m` : `${m.distance_km.toFixed(1)} km`}
                       </Badge>
                     )}

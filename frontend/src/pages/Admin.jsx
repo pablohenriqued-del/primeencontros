@@ -11,9 +11,10 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, ShieldAlert, ShieldX, MapPin, Star, Loader2, ImageIcon } from "lucide-react";
+import { ShieldCheck, ShieldAlert, ShieldX, MapPin, Star, Loader2, ImageIcon, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import MediaEditor from "@/components/MediaEditor";
+import AdminProfileEditor from "@/components/AdminProfileEditor";
 
 function Pill({ verified }) {
   return verified ? (
@@ -39,6 +40,7 @@ export default function Admin() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [mediaTarget, setMediaTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
 
   const fetchList = async () => {
     setLoading(true);
@@ -174,6 +176,14 @@ export default function Admin() {
               </div>
               <div className="flex gap-2 flex-wrap">
                 <Button
+                  data-testid={`edit-data-${m.id}`}
+                  onClick={() => setEditTarget(m)}
+                  variant="outline"
+                  className="rounded-full border-zinc-700 text-zinc-200 hover:bg-zinc-900 hover:text-red-400"
+                >
+                  <Pencil className="h-4 w-4 mr-1.5" /> Dados
+                </Button>
+                <Button
                   data-testid={`edit-media-${m.id}`}
                   onClick={() => setMediaTarget(m)}
                   variant="outline"
@@ -264,6 +274,14 @@ export default function Admin() {
         onUpdated={(updated) => {
           setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
           setMediaTarget(updated);
+        }}
+      />
+      <AdminProfileEditor
+        open={!!editTarget}
+        massagista={editTarget}
+        onClose={() => setEditTarget(null)}
+        onUpdated={(updated) => {
+          setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
         }}
       />
     </div>

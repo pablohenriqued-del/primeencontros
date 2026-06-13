@@ -620,6 +620,38 @@ async def _admin_upload(admin: Dict[str, Any], mid: str, kind: str, file: Upload
     return {**record, "url": _public_file_url(result["path"])}
 
 
+@api.put("/admin/massagistas/{mid}")
+async def admin_update_massagista(mid: str, payload: ProfileUpdate, request: Request):
+    await require_admin(request)
+    existing = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Massagista não encontrada")
+
+    update: Dict[str, Any] = {}
+    data = payload.model_dump(exclude_unset=True)
+    for k in ("name", "bio", "specialties", "experience_years", "languages"):
+        if k in data:
+            update[k] = data[k]
+    if "bairro_slug" in data:
+        b = BAIRRO_MAP.get(data["bairro_slug"])
+        if not b:
+            raise HTTPException(400, "Bairro inválido")
+        update.update({"bairro": b.name, "bairro_slug": b.slug, "lat": b.lat, "lng": b.lng})
+    if "price_60" in data:
+        update["price_60"] = float(data["price_60"])
+        update["hourly_rate"] = float(data["price_60"])
+    if "price_90" in data:
+        update["price_90"] = float(data["price_90"])
+    if "price_120" in data:
+        update["price_120"] = float(data["price_120"])
+
+    if update:
+        await db.massagistas.update_one({"id": mid}, {"$set": update})
+    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    return fresh
+
+
+
 @api.post("/admin/massagistas/{mid}/photo")
 async def upload_photo(mid: str, request: Request, file: UploadFile = File(...)):
     admin = await require_admin(request)

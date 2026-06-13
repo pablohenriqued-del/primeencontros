@@ -393,9 +393,13 @@ async def auth_me(
 async def auth_logout(
     response: Response,
     session_token: Optional[str] = Cookie(default=None),
+    authorization: Optional[str] = Header(default=None),
 ):
-    if session_token:
-        await db.user_sessions.delete_one({"session_token": session_token})
+    token = session_token
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
 

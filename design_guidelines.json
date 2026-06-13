@@ -1,0 +1,144 @@
+{
+  "theme": "LIGHT",
+  "archetype": "Archetype 1: Organic & Earthy",
+  "brand_name": "Oásis Rio",
+  "typography": {
+    "headings": {
+      "font_family": "Outfit, sans-serif",
+      "weights": ["300", "500", "700"],
+      "classes": "font-sans tracking-tight text-stone-900"
+    },
+    "body": {
+      "font_family": "Manrope, sans-serif",
+      "weights": ["400", "500", "600"],
+      "classes": "font-sans leading-relaxed text-stone-600"
+    },
+    "scales": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-light tracking-tighter",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-medium tracking-tight",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base",
+      "small": "text-sm text-stone-500",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-emerald-700"
+    }
+  },
+  "colors": {
+    "background": {
+      "primary": "bg-stone-50",
+      "secondary": "bg-white",
+      "glass": "bg-white/70 backdrop-blur-xl backdrop-saturate-150"
+    },
+    "text": {
+      "primary": "text-stone-900",
+      "secondary": "text-stone-600",
+      "accent": "text-emerald-800",
+      "inverse": "text-white"
+    },
+    "border": {
+      "default": "border-stone-200",
+      "glass": "border-white/40",
+      "focus": "focus:ring-2 focus:ring-emerald-500/50"
+    },
+    "brand": {
+      "primary": "bg-emerald-800",
+      "primary_hover": "hover:bg-emerald-900",
+      "secondary": "bg-stone-200",
+      "secondary_hover": "hover:bg-stone-300"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "Generous Spacing Philosophy. Use 2-3x more spacing than typical apps. Breathe.",
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "grids": {
+      "therapist_list": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8",
+      "detail_bento": "grid grid-cols-1 md:grid-cols-12 gap-6"
+    },
+    "spacing_scale": {
+      "section_padding": "py-16 md:py-24",
+      "card_padding": "p-6 sm:p-8"
+    },
+    "cards": "bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden"
+  },
+  "components_strategy": {
+    "navigation": "Sticky glassmorphism header (bg-white/80 backdrop-blur-xl border-b border-stone-200). Avatar for Google Auth. Visible links on desktop.",
+    "hero": "Large soft-focus image overlayed with bg-stone-900/40. Left-aligned typography. Float a subtle search/filter bar over the bottom edge of the hero.",
+    "buttons": "Rounded-full or soft rounded-xl. Primary CTA is emerald-800 text-white. Include explicit hover states (translate-y-[-2px] shadow-md).",
+    "inputs": "Shadcn UI customized. border-stone-200, focus:ring-emerald-500, rounded-xl.",
+    "badges": "For bairro (neighborhood) and rating. rounded-full px-3 py-1 text-xs font-medium bg-stone-100 text-stone-700.",
+    "calendar": "Shadcn Calendar for booking dates. Accent color emerald-800.",
+    "video_player": "Rounded-2xl overflow-hidden relative group, center play button with blur backdrop."
+  },
+  "motion_and_interaction": {
+    "hover": "Subtle -translate-y-1 on cards. Buttons must change background color and elevate.",
+    "transitions": "transition-all duration-300 ease-in-out",
+    "page_load": "Framer motion stagger children for the list of massagistas."
+  },
+  "media_urls": {
+    "hero_backgrounds": [
+      {
+        "url": "https://images.unsplash.com/photo-1679957631642-94f406206544?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwzfHxyaW8lMjBkZSUyMGphbmVpcm8lMjBpcGFuZW1hJTIwbGFuZHNjYXBlfGVufDB8fHx8MTc4MTMxMTk3NXww&ixlib=rb-4.1.0&q=85",
+        "description": "Rio de Janeiro sunset landscape, use for hero section background."
+      }
+    ],
+    "therapists": [
+      {
+        "url": "https://images.unsplash.com/photo-1598901978648-4d1c0d66518a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHwxfHxtYXNzYWdlJTIwdGhlcmFwaXN0JTIwcHJvZmVzc2lvbmFsJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzgxMzExOTc1fDA&ixlib=rb-4.1.0&q=85",
+        "name": "Camila Souza",
+        "bairro": "Ipanema"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1756699197173-5ef672a423fa?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHwzfHxtYXNzYWdlJTIwdGhlcmFwaXN0JTIwcHJvZmVzc2lvbmFsJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzgxMzExOTc1fDA&ixlib=rb-4.1.0&q=85",
+        "name": "Mariana Costa",
+        "bairro": "Leblon"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1746813628081-0c8c1611aace?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzB8MHwxfHNlYXJjaHw0fHxtYXNzYWdlJTIwdGhlcmFwaXN0JTIwcHJvZmVzc2lvbmFsJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzgxMzExOTc1fDA&ixlib=rb-4.1.0&q=85",
+        "name": "Rafael Silva",
+        "bairro": "Copacabana"
+      }
+    ],
+    "services_and_spa": [
+      {
+        "url": "https://images.unsplash.com/photo-1741522509438-a120c0bb5e88?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDN8MHwxfHNlYXJjaHwxfHxzcGElMjBtYXNzYWdlJTIwY2FsbXxlbnwwfHx8fDE3ODEzMTE5NzV8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Massage detail shot, use for service details or gallery."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1639162906614-0603b0ae95fd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDN8MHwxfHNlYXJjaHwzfHxzcGElMjBtYXNzYWdlJTIwY2FsbXxlbnwwfHx8fDE3ODEzMTE5NzV8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Spa environment, use for booking flow or location details."
+      }
+    ]
+  },
+  "key_functionalities": [
+    "Location-based search mapping user to nearest Bairros (Ipanema, Leblon, Copacabana, Botafogo).",
+    "List of massagistas sorted by distance/rating.",
+    "Massagista Profile Page: Bio, gallery (photos/video thumbnail), hourly rates (60/90/120 min).",
+    "Checkout Flow: Select duration -> Date/Time via Calendar -> Location (Studio or Home) -> Stripe Payment.",
+    "User Dashboard: 'Minhas Reservas' (My Bookings) showing past and upcoming appointments.",
+    "Google Auth Login integrated into the header.",
+    "Mobile-first responsive layout (drawer filters for mobile, sidebar for desktop)."
+  ],
+  "data_testid_conventions": {
+    "rules": "All interactive elements MUST have a data-testid. Use kebab-case, role-based.",
+    "examples": [
+      "search-bairro-input",
+      "filter-price-button",
+      "therapist-card-link",
+      "booking-date-picker",
+      "checkout-pay-button",
+      "google-login-button"
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Use .js/.jsx files for React components. Do NOT use .tsx files as per environment constraints.",
+    "Initialize Tailwind config with Outfit and Manrope fonts. Add them via Google Fonts.",
+    "Build a mobile-first UI using Shadcn components (Drawer, Dialog, Calendar, Form, Button, Input).",
+    "Implement the Glassmorphism sticky header strictly with backdrop-blur-xl and backdrop-saturate-150.",
+    "For the massagista profile, use an asymmetrical bento grid for desktop (Hero image col-span-8, Booking widget col-span-4).",
+    "Never use red (iFood color). Stick strictly to the Organic & Earthy palette (Stone and Emerald).",
+    "For the demo video on the profile, simulate a video player using a thumbnail image and a centered play button overlay.",
+    "Implement a realistic mock of Stripe checkout (a summary card + mock pay button).",
+    "Ensure all text is in Portuguese as requested.",
+    "Use lucide-react for all icons."
+  ]
+}

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, ShieldAlert, ShieldX, MapPin, Star, Loader2, ImageIcon, Pencil } from "lucide-react";
+import { ShieldCheck, ShieldAlert, ShieldX, MapPin, Star, Loader2, ImageIcon, Pencil, MessageCircle, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import MediaEditor from "@/components/MediaEditor";
 import AdminProfileEditor from "@/components/AdminProfileEditor";

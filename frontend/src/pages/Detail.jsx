@@ -10,7 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Star, MapPin, Clock, ChevronLeft, Play, Languages, Award, Sparkles, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Star, MapPin, Clock, ChevronLeft, Play, Languages, Award, Sparkles, ShieldCheck, ShieldAlert, MessageCircle } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -48,6 +48,14 @@ export default function Detail() {
   }
 
   const priceFor = (d) => d === 60 ? m.price_60 : d === 90 ? m.price_90 : m.price_120;
+
+  // WhatsApp helpers
+  const hasWhatsApp = !!(m.ddd && m.phone);
+  const waNumber = hasWhatsApp ? `55${m.ddd}${m.phone}` : null;
+  const waMessage = hasWhatsApp
+    ? encodeURIComponent(`Olá ${m.name}, te encontrei na Prime Encontros e gostaria de tirar uma dúvida sobre o atendimento.`)
+    : "";
+  const waUrl = hasWhatsApp ? `https://wa.me/${waNumber}?text=${waMessage}` : null;
 
   const startBooking = () => {
     if (!user) { toast.info("Faça login para reservar"); login(); return; }
@@ -296,6 +304,18 @@ export default function Detail() {
             >
               Continuar para agendamento
             </Button>
+            {hasWhatsApp && (
+              <a
+                href={waUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="whatsapp-button"
+                className="mt-2 w-full h-12 rounded-xl inline-flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1ebd5a] text-white text-base font-medium shadow-lg shadow-[#25D366]/25 transition-colors"
+              >
+                <MessageCircle className="h-5 w-5" />
+                Falar no WhatsApp
+              </a>
+            )}
             <p className="text-xs text-zinc-500 text-center mt-3">
               Pagamento seguro via Stripe · Confirmação imediata
             </p>
@@ -404,14 +424,27 @@ export default function Detail() {
               <div className="text-sm text-zinc-300">
                 Total: <span className="font-display text-xl font-semibold text-red-500 ml-1">{brl(priceFor(duration))}</span>
               </div>
-              <Button
-                data-testid="checkout-pay-button"
-                onClick={confirmAndPay}
-                disabled={submitting}
-                className="rounded-xl bg-red-600 hover:bg-red-700 text-white px-6 h-11 shadow-lg shadow-red-600/25"
-              >
-                {submitting ? "Redirecionando..." : "Pagar com Stripe"}
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {hasWhatsApp && (
+                  <a
+                    href={waUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="whatsapp-button-modal"
+                    className="rounded-xl bg-[#25D366] hover:bg-[#1ebd5a] text-white px-4 h-11 inline-flex items-center gap-2 text-sm font-medium shadow-lg shadow-[#25D366]/25 transition-colors"
+                  >
+                    <MessageCircle className="h-4 w-4" /> WhatsApp
+                  </a>
+                )}
+                <Button
+                  data-testid="checkout-pay-button"
+                  onClick={confirmAndPay}
+                  disabled={submitting}
+                  className="rounded-xl bg-red-600 hover:bg-red-700 text-white px-6 h-11"
+                >
+                  {submitting ? "Redirecionando..." : "Pagar com Stripe"}
+                </Button>
+              </div>
             </div>
           </DialogFooter>
         </DialogContent>

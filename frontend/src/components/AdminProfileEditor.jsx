@@ -19,6 +19,7 @@ export default function AdminProfileEditor({ open, massagista, onClose, onUpdate
     name: "", bairro_slug: "", bio: "",
     specialties: [], price_60: "", price_90: "", price_120: "",
     experience_years: "", languages: [],
+    ddd: "", phone: "",
   });
 
   useEffect(() => {
@@ -37,6 +38,8 @@ export default function AdminProfileEditor({ open, massagista, onClose, onUpdate
       price_120: String(massagista.price_120 ?? ""),
       experience_years: String(massagista.experience_years ?? ""),
       languages: massagista.languages || ["Português"],
+      ddd: massagista.ddd || "",
+      phone: massagista.phone || "",
     });
   }, [massagista]);
 
@@ -77,6 +80,8 @@ export default function AdminProfileEditor({ open, massagista, onClose, onUpdate
         price_120: form.price_120 ? parseFloat(form.price_120) : undefined,
         experience_years: parseInt(form.experience_years, 10) || 0,
         languages: form.languages,
+        ddd: (form.ddd || "").replace(/\D/g, ""),
+        phone: (form.phone || "").replace(/\D/g, ""),
       };
       const { data } = await api.put(`/admin/massagistas/${massagista.id}`, payload);
       toast.success("Perfil atualizado");
@@ -176,6 +181,30 @@ export default function AdminProfileEditor({ open, massagista, onClose, onUpdate
             <div>
               <Label className="text-xs uppercase tracking-wider text-zinc-500">Idiomas (vírgula)</Label>
               <Input data-testid="admin-edit-languages" value={form.languages.join(", ")} onChange={(e) => setForm({ ...form, languages: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })} className="mt-2 rounded-xl bg-black border-zinc-800 text-zinc-100" />
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-xs uppercase tracking-wider text-zinc-500">WhatsApp da profissional</Label>
+            <div className="mt-2 grid grid-cols-[100px_1fr] gap-3">
+              <Input
+                data-testid="admin-edit-ddd"
+                value={form.ddd}
+                onChange={(e) => setForm({ ...form, ddd: e.target.value.replace(/\D/g, "").slice(0, 2) })}
+                placeholder="DDD"
+                maxLength={2}
+                inputMode="numeric"
+                className="rounded-xl bg-black border-zinc-800 text-zinc-100 text-center font-medium"
+              />
+              <Input
+                data-testid="admin-edit-phone"
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 9) })}
+                placeholder="Número (9 dígitos)"
+                maxLength={9}
+                inputMode="numeric"
+                className="rounded-xl bg-black border-zinc-800 text-zinc-100"
+              />
             </div>
           </div>
         </div>

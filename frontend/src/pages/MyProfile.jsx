@@ -28,6 +28,7 @@ export default function MyProfile() {
     name: "", bairro_slug: "", bio: "",
     specialties: [], price_60: "", price_90: "", price_120: "",
     experience_years: "", languages: ["Português"],
+    ddd: "", phone: "",
   });
   const [newSpec, setNewSpec] = useState("");
 
@@ -52,6 +53,8 @@ export default function MyProfile() {
             price_120: String(data.profile.price_120 || ""),
             experience_years: String(data.profile.experience_years || ""),
             languages: data.profile.languages || ["Português"],
+            ddd: data.profile.ddd || "",
+            phone: data.profile.phone || "",
           });
         } else {
           setForm((f) => ({ ...f, name: user.name || "" }));
@@ -99,6 +102,10 @@ export default function MyProfile() {
     const exp = parseInt(form.experience_years, 10);
     if (Number.isNaN(exp) || exp < 0) { toast.error("Informe seus anos de experiência"); return; }
     if (form.languages.length === 0) { toast.error("Informe ao menos um idioma"); return; }
+    const ddd = (form.ddd || "").replace(/\D/g, "");
+    const phone = (form.phone || "").replace(/\D/g, "");
+    if (ddd.length !== 2) { toast.error("Informe o DDD com 2 dígitos"); return; }
+    if (phone.length < 8 || phone.length > 9) { toast.error("Telefone precisa ter 8 ou 9 dígitos"); return; }
 
     setSaving(true);
     try {
@@ -112,6 +119,8 @@ export default function MyProfile() {
         price_120: form.price_120 ? parseFloat(form.price_120) : undefined,
         experience_years: exp,
         languages: form.languages,
+        ddd,
+        phone,
       };
       const wasNew = !profile;
       if (profile) {
@@ -262,6 +271,30 @@ export default function MyProfile() {
           <div>
             <Label className="text-xs uppercase tracking-wider text-zinc-500">Idiomas (separados por vírgula)</Label>
             <Input data-testid="profile-languages" value={form.languages.join(", ")} onChange={(e) => setForm({ ...form, languages: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })} className="mt-2 rounded-xl bg-black border-zinc-800 text-zinc-100" />
+          </div>
+        </div>
+
+        <div>
+          <Label className="text-xs uppercase tracking-wider text-zinc-500">WhatsApp · clientes vão te chamar direto por aqui</Label>
+          <div className="mt-2 grid grid-cols-[100px_1fr] gap-3">
+            <Input
+              data-testid="profile-ddd"
+              value={form.ddd}
+              onChange={(e) => setForm({ ...form, ddd: e.target.value.replace(/\D/g, "").slice(0, 2) })}
+              placeholder="DDD"
+              maxLength={2}
+              inputMode="numeric"
+              className="rounded-xl bg-black border-zinc-800 text-zinc-100 text-center font-medium"
+            />
+            <Input
+              data-testid="profile-phone"
+              value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 9) })}
+              placeholder="Número (9 dígitos)"
+              maxLength={9}
+              inputMode="numeric"
+              className="rounded-xl bg-black border-zinc-800 text-zinc-100"
+            />
           </div>
         </div>
 

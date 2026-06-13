@@ -218,6 +218,8 @@ class ProfileCreate(BaseModel):
     price_120: Optional[float] = None
     experience_years: int = Field(ge=0, le=60)
     languages: List[str] = Field(min_length=1)
+    ddd: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class ProfileUpdate(BaseModel):
@@ -230,6 +232,8 @@ class ProfileUpdate(BaseModel):
     bairro_slug: Optional[str] = None
     experience_years: Optional[int] = None
     languages: Optional[List[str]] = None
+    ddd: Optional[str] = None
+    phone: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +339,8 @@ async def seed_massagistas():
             "video_thumb": SPA1,
             "experience_years": exp,
             "languages": langs,
+            "ddd": "21",
+            "phone": f"99{(80000000 + i * 137):08d}",
             "verified": i < 8,  # first 8 are pre-verified for demo
             "verification": {
                 "status": "verified" if i < 8 else "pending",
@@ -351,7 +357,7 @@ async def seed_massagistas():
 
 
 async def migrate_massagistas():
-    """Backfill verification fields on existing seed docs."""
+    """Backfill verification + phone fields on existing seed docs."""
     await db.massagistas.update_many(
         {"verified": {"$exists": False}},
         {"$set": {
@@ -365,6 +371,10 @@ async def migrate_massagistas():
                 "verified_by": None,
             },
         }},
+    )
+    await db.massagistas.update_many(
+        {"ddd": {"$exists": False}},
+        {"$set": {"ddd": "21", "phone": ""}},
     )
 
 
@@ -629,7 +639,7 @@ async def admin_update_massagista(mid: str, payload: ProfileUpdate, request: Req
 
     update: Dict[str, Any] = {}
     data = payload.model_dump(exclude_unset=True)
-    for k in ("name", "bio", "specialties", "experience_years", "languages"):
+    for k in ("name", "bio", "specialties", "experience_years", "languages", "ddd", "phone"):
         if k in data:
             update[k] = data[k]
     if "bairro_slug" in data:
@@ -1153,6 +1163,8 @@ async def create_my_profile(payload: ProfileCreate, request: Request):
         "video_thumb": "",
         "experience_years": int(payload.experience_years),
         "languages": payload.languages,
+        "ddd": (payload.ddd or "").strip(),
+        "phone": (payload.phone or "").strip(),
         "verified": False,
         "verification": {
             "status": "pending",

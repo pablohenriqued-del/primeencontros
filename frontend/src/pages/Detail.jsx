@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams, Link } from "react-router-dom";
 import { api, brl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Star, MapPin, Clock, ChevronLeft, ChevronRight, Play, Languages, Award, Sparkles, ShieldCheck, ShieldAlert, MessageCircle, X } from "lucide-react";
+import { Star, MapPin, Clock, ChevronLeft, ChevronRight, Play, Languages, Award, Sparkles, ShieldCheck, ShieldAlert, MessageCircle, X, Share2 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -19,6 +19,7 @@ const TIME_SLOTS = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00
 export default function Detail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, login } = useAuth();
   const [m, setM] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -43,6 +44,35 @@ export default function Detail() {
     }).finally(() => setLoading(false));
     api.get(`/massagistas/${id}/reviews`).then(({ data }) => setReviews(data)).catch(() => {});
   }, [id, navigate]);
+
+  // Deep-link: open lightbox at index from ?foto=N (1-indexed) once professional is loaded
+  useEffect(() => {
+    if (!m) return;
+    const foto = parseInt(searchParams.get("foto") || "", 10);
+    if (!isNaN(foto) && foto >= 1 && foto <= (m.gallery || []).length) {
+      setLightboxIndex(foto - 1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m]);
+
+  // Sync lightbox index → URL (?foto=N)
+  useEffect(() => {
+    if (!m) return;
+    const current = searchParams.get("foto");
+    if (lightboxIndex >= 0) {
+      const next = String(lightboxIndex + 1);
+      if (current !== next) {
+        const params = new URLSearchParams(searchParams);
+        params.set("foto", next);
+        setSearchParams(params, { replace: true });
+      }
+    } else if (current) {
+      const params = new URLSearchParams(searchParams);
+      params.delete("foto");
+      setSearchParams(params, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lightboxIndex, m]);
 
   useEffect(() => {
     if (lightboxIndex < 0 || !m) return;
@@ -70,6 +100,31 @@ export default function Detail() {
   const closeLightbox = () => setLightboxIndex(-1);
   const lightboxPrev = () => setLightboxIndex((i) => (i <= 0 ? gallery.length - 1 : i - 1));
   const lightboxNext = () => setLightboxIndex((i) => (i >= gallery.length - 1 ? 0 : i + 1));
+
+  const sharePhoto = async () => {
+    if (lightboxIndex < 0) return;
+    const url = `${window.location.origin}/massagista/${m.id}?foto=${lightboxIndex + 1}`;
+    const shareData = {
+      title: `${m.name} · Prime Encontros`,
+      text: `Veja o perfil de ${m.name} em Prime Encontros`,
+      url,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast.success("Link copiado para a área de transferência");
+      }
+    } catch (_e) {
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success("Link copiado para a área de transferência");
+      } catch {
+        toast.error("Não foi possível compartilhar");
+      }
+    }
+  };
 
   // Video thumbnail with graceful fallback
   const hasVideo = !!m.video_url;
@@ -427,6 +482,15 @@ export default function Detail() {
                 className="absolute top-3 right-3 h-9 w-9 rounded-full bg-black/70 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
               >
                 <X className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={sharePhoto}
+                aria-label="Compartilhar esta foto"
+                data-testid="lightbox-share"
+                className="absolute top-3 right-14 h-9 px-3 rounded-full bg-black/70 hover:bg-red-600 text-white inline-flex items-center gap-1.5 text-xs font-medium transition-colors"
+              >
+                <Share2 className="h-3.5 w-3.5" /> Compartilhar
               </button>
               {gallery.length > 1 && (
                 <>

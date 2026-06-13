@@ -29,6 +29,7 @@ App estilo iFood para contratação de massagistas no Rio de Janeiro. Funcionali
 - Upload de fotos/vídeos via Object Storage
 - Mapa Leaflet com geolocalização
 - **Lightbox de fotos** no Detail (clique amplia, prev/next, ESC/setas, contador) — 2026-06-13
+- **Deep-link de foto** `?foto=N` com sincronização bidirecional e botão "Compartilhar" (Web Share API + fallback clipboard) — 2026-06-13
 - **Thumbnail real do vídeo** extraída no client (canvas/seek 1s) ao fazer upload; botão "Gerar do vídeo" para regenerar de vídeos já existentes — 2026-06-13
 
 ## Backlog

@@ -49,6 +49,10 @@ export default function Detail() {
 
   const priceFor = (d) => d === 60 ? m.price_60 : d === 90 ? m.price_90 : m.price_120;
 
+  // Video thumbnail with graceful fallback
+  const hasVideo = !!m.video_url;
+  const videoThumb = m.video_thumb || m.main_image || m.gallery?.[0] || "";
+
   // WhatsApp helpers
   const hasWhatsApp = !!(m.ddd && m.phone);
   const waNumber = hasWhatsApp ? `55${m.ddd}${m.phone}` : null;
@@ -111,21 +115,29 @@ export default function Detail() {
               <img src={m.gallery[0]} alt={m.name} className="w-full h-full object-cover" />
             </div>
             <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
-              <img src={m.gallery[1]} alt="" className="w-full h-full object-cover" />
+              {m.gallery?.[1] && <img src={m.gallery[1]} alt="" className="w-full h-full object-cover" />}
             </div>
-            <div
-              data-testid="open-video-button"
-              onClick={() => setVideoOpen(true)}
-              className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900 relative cursor-pointer group ring-1 ring-red-600/0 hover:ring-red-600/60 transition-all"
-            >
-              <img src={m.video_thumb} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90" />
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                <div className="h-14 w-14 rounded-full bg-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(220,38,38,0.6)] group-hover:scale-110 transition-transform">
-                  <Play className="h-6 w-6 text-white ml-0.5" />
+            {hasVideo ? (
+              <div
+                data-testid="open-video-button"
+                onClick={() => setVideoOpen(true)}
+                className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900 relative cursor-pointer group ring-1 ring-red-600/0 hover:ring-red-600/60 transition-all"
+              >
+                {videoThumb && (
+                  <img src={videoThumb} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90" />
+                )}
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                  <div className="h-14 w-14 rounded-full bg-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(220,38,38,0.6)] group-hover:scale-110 transition-transform">
+                    <Play className="h-6 w-6 text-white ml-0.5" />
+                  </div>
                 </div>
+                <div className="absolute bottom-2 right-2 text-[10px] uppercase tracking-wider text-white font-semibold bg-red-600 px-2 py-0.5 rounded-full">Vídeo</div>
               </div>
-              <div className="absolute bottom-2 right-2 text-[10px] uppercase tracking-wider text-white font-semibold bg-red-600 px-2 py-0.5 rounded-full">Vídeo</div>
-            </div>
+            ) : (
+              <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
+                {m.gallery[2] && <img src={m.gallery[2]} alt="" className="w-full h-full object-cover" />}
+              </div>
+            )}
             <div className="hidden sm:block col-span-1 row-span-1 rounded-2xl overflow-hidden bg-zinc-900">
               <img src={m.gallery[2]} alt="" className="w-full h-full object-cover" />
             </div>

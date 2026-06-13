@@ -737,7 +737,11 @@ async def upload_video(mid: str, request: Request, file: UploadFile = File(...))
             {"storage_path": storage_path},
             {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}},
         )
-    await db.massagistas.update_one({"id": mid}, {"$set": {"video_url": url}})
+    update = {"video_url": url}
+    # Ensure a thumbnail exists — fallback to current main image so the play tile renders
+    if not m.get("video_thumb"):
+        update["video_thumb"] = m.get("main_image") or (m.get("gallery") or [""])[0]
+    await db.massagistas.update_one({"id": mid}, {"$set": update})
     fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
     return {"url": url, "massagista": fresh}
 
@@ -1386,7 +1390,10 @@ async def my_profile_video(request: Request, file: UploadFile = File(...)):
     if prev and "/api/files/" in prev:
         sp = prev.split("/api/files/", 1)[1]
         await db.files.update_one({"storage_path": sp}, {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}})
-    await db.massagistas.update_one({"id": m["id"]}, {"$set": {"video_url": url}})
+    update = {"video_url": url}
+    if not m.get("video_thumb"):
+        update["video_thumb"] = m.get("main_image") or (m.get("gallery") or [""])[0]
+    await db.massagistas.update_one({"id": m["id"]}, {"$set": update})
     fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
     return {"url": url, "massagista": fresh}
 

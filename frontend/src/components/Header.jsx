@@ -28,7 +28,7 @@ export default function Header() {
         </Link>
 
         <nav className="hidden md:flex items-center gap-7 text-sm text-zinc-300">
-          <Link to="/" className="hover:text-red-500 transition-colors" data-testid="nav-explore">Explorar</Link>
+          <Link to="/" className="hover:text-red-500 transition-colors" data-testid="nav-explore">Massagistas</Link>
           {user && (
             <Link to="/minhas-reservas" className="hover:text-red-500 transition-colors" data-testid="nav-bookings">
               Minhas reservas

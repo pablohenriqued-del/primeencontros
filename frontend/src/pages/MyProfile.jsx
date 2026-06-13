@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import MediaEditor from "@/components/MediaEditor";
+import ProfileStats from "@/components/ProfileStats";
 import { ShieldAlert, ShieldCheck, Star, ImageIcon, Save, Plus, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -186,6 +187,12 @@ export default function MyProfile() {
               <span>{profile.gallery?.length || 0} fotos</span>
             </div>
           </div>
+        </div>
+      )}
+
+      {profile && (
+        <div className="mb-6">
+          <ProfileStats />
         </div>
       )}
 

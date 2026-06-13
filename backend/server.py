@@ -14,7 +14,7 @@ from typing import List, Optional, Dict, Any
 
 import httpx
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Cookie, Header, Query, UploadFile, File, Body
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -1505,6 +1505,181 @@ async def my_profile_video_thumb(request: Request, file: UploadFile = File(...))
     await db.massagistas.update_one({"id": m["id"]}, {"$set": {"video_thumb": f["url"]}})
     fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
     return {"url": f["url"], "massagista": fresh}
+
+
+# ---------------------------------------------------------------------------
+# Profile views tracking
+# ---------------------------------------------------------------------------
+@api.post("/massagistas/{mid}/view")
+async def track_view(mid: str, request: Request):
+    """Fire-and-forget view counter. Skips owner self-views and obvious bots."""
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0, "id": 1, "owner_user_id": 1})
+    if not m:
+        return {"ok": False}
+    # Skip owner self-views
+    if user and m.get("owner_user_id") == user.get("user_id"):
+        return {"ok": True, "skipped": "owner"}
+    ua = (request.headers.get("user-agent") or "")[:300]
+    if any(k in ua.lower() for k in ("bot", "crawl", "spider", "preview")):
+        return {"ok": True, "skipped": "bot"}
+    await db.profile_views.insert_one({
+        "id": f"pv_{uuid.uuid4().hex[:10]}",
+        "massagista_id": mid,
+        "user_id": user["user_id"] if user else None,
+        "user_agent": ua,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Owner stats panel
+# ---------------------------------------------------------------------------
+@api.get("/me/stats")
+async def my_stats(request: Request):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Crie seu perfil primeiro")
+    mid = m["id"]
+    now = datetime.now(timezone.utc)
+    cutoff_30 = (now - timedelta(days=30)).isoformat()
+
+    # Views
+    views_total = await db.profile_views.count_documents({"massagista_id": mid})
+    views_30d = await db.profile_views.count_documents({"massagista_id": mid, "created_at": {"$gte": cutoff_30}})
+
+    # WhatsApp clicks
+    wa_total = await db.whatsapp_clicks.count_documents({"massagista_id": mid})
+    wa_30d = await db.whatsapp_clicks.count_documents({"massagista_id": mid, "created_at": {"$gte": cutoff_30}})
+
+    # Bookings by status
+    pipeline = [
+        {"$match": {"massagista_id": mid}},
+        {"$group": {"_id": "$status", "count": {"$sum": 1}, "revenue": {"$sum": "$amount"}}},
+    ]
+    raw = await db.bookings.aggregate(pipeline).to_list(50)
+    by_status = {r["_id"]: {"count": int(r["count"]), "revenue": float(r.get("revenue", 0) or 0)} for r in raw}
+    confirmed_count = by_status.get("confirmed", {}).get("count", 0) + by_status.get("completed", {}).get("count", 0)
+    revenue_confirmed = by_status.get("confirmed", {}).get("revenue", 0) + by_status.get("completed", {}).get("revenue", 0)
+
+    # Recent bookings (10 last)
+    recent = await db.bookings.find(
+        {"massagista_id": mid},
+        {"_id": 0, "id": 1, "user_email": 1, "date": 1, "time": 1, "duration": 1, "amount": 1, "status": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(10)
+
+    # Conversion (confirmed / views)
+    conversion = round((confirmed_count / views_total) * 100, 1) if views_total > 0 else None
+
+    return {
+        "massagista_id": mid,
+        "name": m.get("name"),
+        "verified": bool(m.get("verified")),
+        "views": {"total": views_total, "last_30d": views_30d},
+        "whatsapp_clicks": {"total": wa_total, "last_30d": wa_30d},
+        "bookings": {
+            "pending_payment": by_status.get("pending_payment", {}).get("count", 0),
+            "confirmed": by_status.get("confirmed", {}).get("count", 0),
+            "completed": by_status.get("completed", {}).get("count", 0),
+            "cancelled": by_status.get("cancelled", {}).get("count", 0),
+            "total": sum(v["count"] for v in by_status.values()),
+        },
+        "revenue": {
+            "confirmed": float(revenue_confirmed),
+            "currency": "BRL",
+        },
+        "rating": {
+            "average": float(m.get("rating") or 0),
+            "count": int(m.get("reviews") or 0),
+        },
+        "conversion_rate_pct": conversion,
+        "recent_bookings": recent,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Open Graph dynamic link (shares from WhatsApp/Insta show rich preview)
+# ---------------------------------------------------------------------------
+def _absolutize(url: str, base: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("/"):
+        return base.rstrip("/") + url
+    return url
+
+
+@api.get("/og/m/{mid}", response_class=HTMLResponse)
+async def og_share(mid: str, request: Request, foto: Optional[int] = None):
+    """Returns an HTML page with Open Graph meta tags + JS/meta redirect.
+    Crawlers (WhatsApp, Telegram, Facebook, X) see the OG tags; real users get redirected."""
+    import html as html_lib
+    import json as _json
+    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Profissional não encontrada")
+
+    base = str(request.base_url).rstrip("/")
+    gallery = m.get("gallery") or []
+    image = m.get("main_image") or (gallery[0] if gallery else "")
+    if foto and 1 <= foto <= len(gallery):
+        image = gallery[foto - 1]
+    image_abs = _absolutize(image, base)
+
+    title = f"{m.get('name','Profissional')} · Prime Encontros"
+    bairro = m.get("bairro", "Rio de Janeiro")
+    bio = (m.get("bio") or "").strip()
+    desc = bio if len(bio) >= 30 else f"Massagem profissional em {bairro} · Prime Encontros · Reserva online segura"
+    desc = desc[:280]
+
+    target = f"/massagista/{mid}"
+    if foto:
+        target += f"?foto={foto}"
+    target_abs = base + target
+
+    # Safe-escape values
+    e = html_lib.escape
+    html = f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{e(title)}</title>
+<meta name="description" content="{e(desc)}">
+<meta property="og:type" content="profile">
+<meta property="og:site_name" content="Prime Encontros">
+<meta property="og:title" content="{e(title)}">
+<meta property="og:description" content="{e(desc)}">
+<meta property="og:image" content="{e(image_abs)}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="1200">
+<meta property="og:url" content="{e(target_abs)}">
+<meta property="og:locale" content="pt_BR">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{e(title)}">
+<meta name="twitter:description" content="{e(desc)}">
+<meta name="twitter:image" content="{e(image_abs)}">
+<link rel="canonical" href="{e(target_abs)}">
+<meta http-equiv="refresh" content="0;url={e(target)}">
+<script>window.location.replace({_json.dumps(target)});</script>
+<style>body{{font-family:system-ui;background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}a{{color:#ef4444}}</style>
+</head>
+<body>
+<p>Carregando perfil de <a href="{e(target)}">{e(m.get('name',''))}</a>...</p>
+</body>
+</html>"""
+    return HTMLResponse(content=html, headers={"Cache-Control": "public, max-age=300"})
 
 
 

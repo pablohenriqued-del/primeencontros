@@ -43,6 +43,8 @@ export default function Detail() {
       navigate("/");
     }).finally(() => setLoading(false));
     api.get(`/massagistas/${id}/reviews`).then(({ data }) => setReviews(data)).catch(() => {});
+    // Track profile view (fire-and-forget; backend skips owner/bots)
+    api.post(`/massagistas/${id}/view`).catch(() => {});
   }, [id, navigate]);
 
   // Deep-link: open lightbox at index from ?foto=N (1-indexed) once professional is loaded
@@ -103,7 +105,8 @@ export default function Detail() {
 
   const sharePhoto = async () => {
     if (lightboxIndex < 0) return;
-    const url = `${window.location.origin}/massagista/${m.id}?foto=${lightboxIndex + 1}`;
+    // Use backend OG endpoint so WhatsApp/Telegram/Insta show rich preview with photo + name
+    const url = `${window.location.origin}/api/og/m/${m.id}?foto=${lightboxIndex + 1}`;
     const shareData = {
       title: `${m.name} · Prime Encontros`,
       text: `Veja o perfil de ${m.name} em Prime Encontros`,

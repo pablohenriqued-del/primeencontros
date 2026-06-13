@@ -33,7 +33,7 @@ export default function Admin() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState("queue"); // queue | all
+  const [view, setView] = useState("queue"); // queue | all | metrics
   const [target, setTarget] = useState(null); // currently moderating
   const [action, setAction] = useState("approve"); // approve | reject
   const [checks, setChecks] = useState({ id: true, photo: true, address: true });
@@ -41,6 +41,8 @@ export default function Admin() {
   const [submitting, setSubmitting] = useState(false);
   const [mediaTarget, setMediaTarget] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
+  const [metrics, setMetrics] = useState(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
 
   const fetchList = async () => {
     setLoading(true);
@@ -56,10 +58,26 @@ export default function Admin() {
     }
   };
 
+  const fetchMetrics = async () => {
+    setMetricsLoading(true);
+    try {
+      const { data } = await api.get("/admin/whatsapp/stats");
+      setMetrics(data);
+    } catch {
+      toast.error("Erro ao carregar métricas");
+    } finally {
+      setMetricsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (authLoading) return;
     if (!user) { setLoading(false); return; }
-    fetchList();
+    if (view === "metrics") {
+      fetchMetrics();
+    } else {
+      fetchList();
+    }
     /* eslint-disable-next-line */
   }, [user, authLoading, view]);
 
@@ -145,11 +163,73 @@ export default function Admin() {
           <TabsList className="bg-zinc-950 border border-zinc-900 rounded-full p-1">
             <TabsTrigger value="queue" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-queue">Fila</TabsTrigger>
             <TabsTrigger value="all" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-all">Todas</TabsTrigger>
+            <TabsTrigger value="metrics" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="tab-metrics">
+              <TrendingUp className="h-3.5 w-3.5 mr-1" /> WhatsApp
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
 
-      {loading ? (
+      {view === "metrics" ? (
+        metricsLoading || !metrics ? (
+          <div className="space-y-3">{[0,1,2].map(i => <div key={i} className="h-20 rounded-2xl bg-zinc-900 animate-pulse" />)}</div>
+        ) : (
+          <div data-testid="metrics-panel">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+              <div className="rounded-2xl border border-zinc-900 bg-zinc-950 p-4">
+                <div className="text-xs uppercase tracking-wider text-zinc-500">Cliques no WhatsApp</div>
+                <div className="font-display text-3xl font-semibold text-zinc-50 mt-1" data-testid="metric-total-clicks">{metrics.total_clicks}</div>
+              </div>
+              <div className="rounded-2xl border border-zinc-900 bg-zinc-950 p-4">
+                <div className="text-xs uppercase tracking-wider text-zinc-500">Reservas confirmadas (Stripe)</div>
+                <div className="font-display text-3xl font-semibold text-zinc-50 mt-1">{metrics.total_confirmed_bookings}</div>
+              </div>
+              <div className="rounded-2xl border border-zinc-900 bg-zinc-950 p-4">
+                <div className="text-xs uppercase tracking-wider text-zinc-500">Conversão Stripe / WA</div>
+                <div className="font-display text-3xl font-semibold text-red-500 mt-1">
+                  {metrics.global_conversion_pct !== null ? `${metrics.global_conversion_pct}%` : "—"}
+                </div>
+                <div className="text-[11px] text-zinc-500 mt-1">cliques que viraram pagamento</div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-900 bg-zinc-950 overflow-hidden">
+              <div className="px-4 py-3 border-b border-zinc-900 text-xs uppercase tracking-wider text-zinc-500 grid grid-cols-12 gap-2">
+                <div className="col-span-5">Profissional</div>
+                <div className="col-span-2 text-right"><MessageCircle className="h-3 w-3 inline" /> Cliques</div>
+                <div className="col-span-2 text-right">Únicos</div>
+                <div className="col-span-2 text-right">Stripe</div>
+                <div className="col-span-1 text-right">%</div>
+              </div>
+              {metrics.by_massagista.map((row) => (
+                <div key={row.massagista_id} data-testid={`metric-row-${row.massagista_id}`} className="px-4 py-3 border-b border-zinc-900 last:border-b-0 grid grid-cols-12 gap-2 items-center hover:bg-zinc-900/40 transition-colors">
+                  <div className="col-span-5 flex items-center gap-3 min-w-0">
+                    <img src={row.main_image} alt="" className="h-9 w-9 rounded-lg object-cover shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-zinc-100 truncate">{row.name}</div>
+                      <div className="text-[11px] text-zinc-500">{row.bairro}</div>
+                    </div>
+                  </div>
+                  <div className="col-span-2 text-right font-display text-lg font-semibold text-zinc-50" data-testid={`metric-clicks-${row.massagista_id}`}>{row.clicks}</div>
+                  <div className="col-span-2 text-right text-sm text-zinc-300">{row.unique_users}</div>
+                  <div className="col-span-2 text-right text-sm text-zinc-300">{row.confirmed_bookings}</div>
+                  <div className="col-span-1 text-right text-sm">
+                    {row.conversion_rate_pct !== null ? (
+                      <span className={row.conversion_rate_pct >= 30 ? "text-red-400" : row.conversion_rate_pct >= 10 ? "text-amber-300" : "text-zinc-500"}>
+                        {row.conversion_rate_pct}%
+                      </span>
+                    ) : <span className="text-zinc-600">—</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-zinc-500 mt-4">
+              Métrica útil para entender quanto da receita potencial pode estar acontecendo via WhatsApp (fora da plataforma).
+              Profissionais com muitos cliques e poucas reservas Stripe são candidatas a renegociação de comissão.
+            </p>
+          </div>
+        )
+      ) : loading ? (
         <div className="space-y-3">{[0,1,2].map(i => <div key={i} className="h-24 rounded-2xl bg-zinc-900 animate-pulse" />)}</div>
       ) : items.length === 0 ? (
         <div className="text-center py-20 text-zinc-500">Nenhuma profissional {view === "queue" ? "na fila de verificação" : "encontrada"}.</div>

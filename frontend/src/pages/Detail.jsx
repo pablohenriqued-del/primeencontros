@@ -57,6 +57,13 @@ export default function Detail() {
     : "";
   const waUrl = hasWhatsApp ? `https://wa.me/${waNumber}?text=${waMessage}` : null;
 
+  const trackWhatsAppClick = (source) => {
+    // fire-and-forget — never blocks the redirect
+    try {
+      api.post("/whatsapp/click", { massagista_id: m.id, source }).catch(() => {});
+    } catch {}
+  };
+
   const startBooking = () => {
     if (!user) { toast.info("Faça login para reservar"); login(); return; }
     setBookingOpen(true);
@@ -309,6 +316,7 @@ export default function Detail() {
                 href={waUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackWhatsAppClick("detail")}
                 data-testid="whatsapp-button"
                 className="mt-2 w-full h-12 rounded-xl inline-flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#1ebd5a] text-white text-base font-medium shadow-lg shadow-[#25D366]/25 transition-colors"
               >
@@ -430,6 +438,7 @@ export default function Detail() {
                     href={waUrl}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={() => trackWhatsAppClick("modal")}
                     data-testid="whatsapp-button-modal"
                     className="rounded-xl bg-[#25D366] hover:bg-[#1ebd5a] text-white px-4 h-11 inline-flex items-center gap-2 text-sm font-medium shadow-lg shadow-[#25D366]/25 transition-colors"
                   >

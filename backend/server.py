@@ -236,6 +236,11 @@ class ProfileUpdate(BaseModel):
     phone: Optional[str] = None
 
 
+class WhatsAppClick(BaseModel):
+    massagista_id: str
+    source: Optional[str] = "detail"  # detail | modal | map
+
+
 # ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
@@ -1262,6 +1267,88 @@ async def my_delete_photo(request: Request, url: str = Body(..., embed=True)):
         )
     fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
     return {"ok": True, "massagista": fresh}
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp click tracking
+# ---------------------------------------------------------------------------
+@api.post("/whatsapp/click")
+async def whatsapp_click(payload: WhatsAppClick, request: Request):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    m = await db.massagistas.find_one({"id": payload.massagista_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Massagista não encontrada")
+    click = {
+        "id": f"wc_{uuid.uuid4().hex[:10]}",
+        "massagista_id": payload.massagista_id,
+        "massagista_name": m["name"],
+        "user_id": user["user_id"] if user else None,
+        "user_email": user["email"] if user else None,
+        "user_name": user.get("name") if user else None,
+        "source": payload.source or "detail",
+        "user_agent": request.headers.get("user-agent", "")[:300],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.whatsapp_clicks.insert_one(dict(click))
+    return {"ok": True}
+
+
+@api.get("/admin/whatsapp/stats")
+async def whatsapp_stats(request: Request):
+    await require_admin(request)
+    pipeline = [
+        {"$group": {
+            "_id": "$massagista_id",
+            "clicks": {"$sum": 1},
+            "unique_users": {"$addToSet": "$user_id"},
+            "last_click_at": {"$max": "$created_at"},
+        }},
+    ]
+    raw = await db.whatsapp_clicks.aggregate(pipeline).to_list(500)
+    by_id = {r["_id"]: r for r in raw}
+
+    # Confirmed bookings per massagista
+    bookings_pipeline = [
+        {"$match": {"status": "confirmed"}},
+        {"$group": {"_id": "$massagista_id", "confirmed": {"$sum": 1}}},
+    ]
+    booked_raw = await db.bookings.aggregate(bookings_pipeline).to_list(500)
+    booked_by_id = {r["_id"]: r["confirmed"] for r in booked_raw}
+
+    # Build result with massagista name
+    docs = await db.massagistas.find({}, {"_id": 0, "id": 1, "name": 1, "bairro": 1, "main_image": 1}).to_list(500)
+    out = []
+    total_clicks = 0
+    total_confirmed = 0
+    for d in docs:
+        r = by_id.get(d["id"], {})
+        clicks = int(r.get("clicks", 0))
+        unique = len([u for u in r.get("unique_users", []) if u])
+        confirmed = int(booked_by_id.get(d["id"], 0))
+        conversion = round((confirmed / clicks) * 100, 1) if clicks > 0 else None
+        out.append({
+            "massagista_id": d["id"],
+            "name": d["name"],
+            "bairro": d.get("bairro"),
+            "main_image": d.get("main_image"),
+            "clicks": clicks,
+            "unique_users": unique,
+            "confirmed_bookings": confirmed,
+            "conversion_rate_pct": conversion,
+            "last_click_at": r.get("last_click_at"),
+        })
+        total_clicks += clicks
+        total_confirmed += confirmed
+    out.sort(key=lambda x: -x["clicks"])
+    return {
+        "total_clicks": total_clicks,
+        "total_confirmed_bookings": total_confirmed,
+        "global_conversion_pct": round((total_confirmed / total_clicks) * 100, 1) if total_clicks > 0 else None,
+        "by_massagista": out,
+    }
 
 
 @api.post("/me/profile/set-main")

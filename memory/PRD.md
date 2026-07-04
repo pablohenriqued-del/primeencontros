@@ -35,6 +35,9 @@ App estilo iFood para contratação de massagistas no Rio de Janeiro. Funcionali
 - **Tracking de visitas ao perfil** via `POST /api/massagistas/{id}/view` (ignora owner self-view e bots) — 2026-06-13
 - **Open Graph dinâmico** `/api/og/m/{id}?foto=N` com meta tags og:* e twitter:*, redirect imediato para o app React — links compartilhados no WhatsApp/Insta exibem foto + nome + bio — 2026-06-13
 - **Card promocional auto-gerado** (PNG 1080x1080 via Pillow) em `/api/massagistas/{id}/promo-card.png` — foto principal + nome + bairro + estrelas + CTA, com preview e botões "Baixar PNG" / "Compartilhar" no painel da massagista — 2026-06-13
+- **Header** renomeado "Explorar" → "Massagistas" — 2026-06-13
+- **Páginas legais LGPD** `/termos` e `/privacidade` com placeholders `[colchetes]` para edição de contato/razão social, links no footer — 2026-06-13
+- **Limpeza pré-produção** — bookings, reviews, whatsapp_clicks, profile_views, payment_transactions apagados; seed reduzido a 1 profissional de teste ("Lara") em Ipanema — 2026-06-13
 
 ## Backlog
 - P1: Sistema de avaliações (escrever review pós-atendimento)

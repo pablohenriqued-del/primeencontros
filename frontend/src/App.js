@@ -1,5 +1,5 @@
 import "@/App.css";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation, Link } from "react-router-dom";
 import { AuthProvider } from "@/context/AuthContext";
 import Header from "@/components/Header";
 import Home from "@/pages/Home";
@@ -9,6 +9,8 @@ import AuthCallback from "@/pages/AuthCallback";
 import CheckoutSuccess from "@/pages/CheckoutSuccess";
 import Admin from "@/pages/Admin";
 import MyProfile from "@/pages/MyProfile";
+import Terms from "@/pages/Terms";
+import Privacy from "@/pages/Privacy";
 import { Toaster } from "@/components/ui/sonner";
 
 function AppRouter() {
@@ -25,6 +27,8 @@ function AppRouter() {
       <Route path="/checkout/success" element={<CheckoutSuccess />} />
       <Route path="/admin" element={<Admin />} />
       <Route path="/sou-profissional" element={<MyProfile />} />
+      <Route path="/termos" element={<Terms />} />
+      <Route path="/privacidade" element={<Privacy />} />
       <Route path="*" element={<Home />} />
     </Routes>
   );
@@ -40,7 +44,10 @@ export default function App() {
           <footer className="border-t border-zinc-900/80 bg-black/60">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 text-sm text-zinc-500 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div>© {new Date().getFullYear()} <span className="text-zinc-300 font-medium">Prime Encontros</span> · Massagem terapêutica profissional</div>
-              <div className="text-xs">Atendimento em Ipanema · Leblon · Copacabana · Botafogo · Barra · e mais</div>
+              <div className="flex items-center gap-5 text-xs">
+                <Link to="/termos" className="hover:text-red-500 transition-colors" data-testid="footer-terms">Termos de Uso</Link>
+                <Link to="/privacidade" className="hover:text-red-500 transition-colors" data-testid="footer-privacy">Privacidade</Link>
+              </div>
             </div>
           </footer>
         </div>

@@ -1,9 +1,8 @@
 import { Link } from "react-router-dom";
 
 // Terms of Use for Prime Encontros — professional massage marketplace (Rio de Janeiro).
-// EDITE OS PLACEHOLDERS entre [colchetes] antes de publicar.
-const CONTACT_EMAIL = "[contato@primeencontros.com.br]";
-const CONTROLLER = "[Nome/Razão social do responsável]";
+const CONTACT_EMAIL = "contato@primeencontros.com";
+const CONTROLLER = "Pablo Henrique Duarte";
 const LOCATION = "Rio de Janeiro / RJ";
 const UPDATED_AT = "13 de junho de 2026";
 

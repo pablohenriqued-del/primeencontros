@@ -8,24 +8,19 @@ import uuid
 import math
 import logging
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date, time as dtime
+from decimal import Decimal
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 import httpx
+import stripe
+import asyncpg
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Cookie, Header, Query, UploadFile, File, Body
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
-
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout,
-    CheckoutSessionResponse,
-    CheckoutStatusResponse,
-    CheckoutSessionRequest,
-)
 
 from promo_card import generate_promo_card
 
@@ -33,13 +28,65 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 # ---------------------------------------------------------------------------
-# Mongo
+# Postgres (migrado do MongoDB em 2026-07-12 — ver .ai/context/ARCHITECTURE.md)
 # ---------------------------------------------------------------------------
-mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
+DATABASE_URL = os.environ["DATABASE_URL"]
+pool: Optional[asyncpg.Pool] = None
+
+
+def _row(record: Optional[asyncpg.Record]) -> Optional[Dict[str, Any]]:
+    """Converte um Record do asyncpg num dict JSON-seguro (mesmo shape que os
+    documentos Mongo de antes: Decimal->float, date/time/datetime->string)."""
+    if record is None:
+        return None
+    d = dict(record)
+    for k, v in d.items():
+        if isinstance(v, Decimal):
+            d[k] = float(v)
+        elif isinstance(v, datetime):
+            d[k] = v.isoformat()
+        elif isinstance(v, dtime):
+            d[k] = v.strftime("%H:%M")
+        elif isinstance(v, date):
+            d[k] = v.isoformat()
+    return d
+
+
+def _rows(records) -> List[Dict[str, Any]]:
+    return [_row(r) for r in records]
+
+
+def _parse_date(s: str) -> date:
+    return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+def _parse_time(s: str) -> dtime:
+    return datetime.strptime(s, "%H:%M").time()
+
+
+def _massagista_out(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reconstrói o objeto aninhado 'verification' a partir das colunas
+    achatadas — contrato de API idêntico ao dos documentos Mongo de antes."""
+    if d is None:
+        return None
+    d["verification"] = {
+        "status": d.pop("verification_status"),
+        "id_check": d.pop("verification_id_check"),
+        "photo_check": d.pop("verification_photo_check"),
+        "address_check": d.pop("verification_address_check"),
+        "verified_at": d.pop("verification_verified_at"),
+        "verified_by": d.pop("verification_verified_by"),
+        "notes": d.pop("verification_notes"),
+    }
+    d.pop("is_deleted", None)
+    d.pop("deleted_by", None)
+    d.pop("deleted_at", None)
+    return d
+
 
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+stripe.api_key = STRIPE_API_KEY
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 EMERGENT_AUTH_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
@@ -324,10 +371,11 @@ SEED_PROFILES = [
 
 
 async def seed_massagistas():
-    count = await db.massagistas.count_documents({})
+    count = await pool.fetchval("SELECT count(*) FROM massagistas")
     if count > 0:
         return
-    docs = []
+    now = datetime.now(timezone.utc)
+    rows = []
     for i, (name, bairro_slug, rating, reviews, bio, specs, base_price, exp, langs) in enumerate(SEED_PROFILES):
         b = BAIRRO_MAP[bairro_slug]
         # small jitter so two massagistas in same bairro have slightly different coords
@@ -335,64 +383,31 @@ async def seed_massagistas():
         jitter_lng = (i % 4) * 0.0008
         portrait = PORTRAITS[i % len(PORTRAITS)]
         gallery = [portrait, SPA1, SPA2, SPA3 if i % 2 == 0 else SPA4]
-        m = {
-            "id": f"m_{uuid.uuid4().hex[:10]}",
-            "name": name,
-            "bairro": b.name,
-            "bairro_slug": b.slug,
-            "lat": b.lat + jitter_lat,
-            "lng": b.lng + jitter_lng,
-            "rating": rating,
-            "reviews": reviews,
-            "bio": bio,
-            "specialties": specs,
-            "hourly_rate": base_price,
-            "price_60": base_price,
-            "price_90": round(base_price * 1.4, 2),
-            "price_120": round(base_price * 1.8, 2),
-            "main_image": portrait,
-            "gallery": gallery,
-            "video_url": SAMPLE_VIDEO,
-            "video_thumb": SPA1,
-            "experience_years": exp,
-            "languages": langs,
-            "ddd": "21",
-            "phone": f"99{(80000000 + i * 137):08d}",
-            "verified": i < 8,  # first 8 are pre-verified for demo
-            "verification": {
-                "status": "verified" if i < 8 else "pending",
-                "id_check": i < 8,
-                "photo_check": i < 8,
-                "address_check": i < 8,
-                "verified_at": datetime.now(timezone.utc).isoformat() if i < 8 else None,
-                "verified_by": "system_seed" if i < 8 else None,
-            },
-        }
-        docs.append(m)
-    await db.massagistas.insert_many(docs)
-    logger.info(f"Seeded {len(docs)} massagistas")
-
-
-async def migrate_massagistas():
-    """Backfill verification + phone fields on existing seed docs."""
-    await db.massagistas.update_many(
-        {"verified": {"$exists": False}},
-        {"$set": {
-            "verified": False,
-            "verification": {
-                "status": "pending",
-                "id_check": False,
-                "photo_check": False,
-                "address_check": False,
-                "verified_at": None,
-                "verified_by": None,
-            },
-        }},
+        verified = i < 8  # first 8 are pre-verified for demo
+        rows.append((
+            f"m_{uuid.uuid4().hex[:10]}", name, b.name, b.slug, b.lat + jitter_lat, b.lng + jitter_lng,
+            rating, reviews, bio, specs, base_price, base_price, round(base_price * 1.4, 2), round(base_price * 1.8, 2),
+            portrait, gallery, SAMPLE_VIDEO, SPA1, exp, langs, "21", f"99{(80000000 + i * 137):08d}",
+            verified,
+            "verified" if verified else "pending", verified, verified, verified,
+            now if verified else None, "system_seed" if verified else None,
+            now,
+        ))
+    await pool.executemany(
+        """
+        INSERT INTO massagistas (
+            id, name, bairro, bairro_slug, lat, lng, rating, reviews, bio, specialties,
+            hourly_rate, price_60, price_90, price_120, main_image, gallery, video_url, video_thumb,
+            experience_years, languages, ddd, phone, verified,
+            verification_status, verification_id_check, verification_photo_check, verification_address_check,
+            verification_verified_at, verification_verified_by, created_at
+        ) VALUES (
+            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+        )
+        """,
+        rows,
     )
-    await db.massagistas.update_many(
-        {"ddd": {"$exists": False}},
-        {"$set": {"ddd": "21", "phone": ""}},
-    )
+    logger.info(f"Seeded {len(rows)} massagistas")
 
 
 # ---------------------------------------------------------------------------
@@ -407,11 +422,6 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return R * c
 
 
-def clean(doc: Dict[str, Any]) -> Dict[str, Any]:
-    doc.pop("_id", None)
-    return doc
-
-
 async def get_current_user(
     session_token: Optional[str] = Cookie(default=None),
     authorization: Optional[str] = Header(default=None),
@@ -421,17 +431,13 @@ async def get_current_user(
         token = authorization.split(" ", 1)[1].strip()
     if not token:
         return None
-    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    sess = _row(await pool.fetchrow("SELECT * FROM user_sessions WHERE session_token = $1", token))
     if not sess:
         return None
-    expires_at = sess["expires_at"]
-    if isinstance(expires_at, str):
-        expires_at = datetime.fromisoformat(expires_at)
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    expires_at = datetime.fromisoformat(sess["expires_at"])
     if expires_at < datetime.now(timezone.utc):
         return None
-    user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    user = _row(await pool.fetchrow("SELECT * FROM users WHERE user_id = $1", sess["user_id"]))
     return user
 
 
@@ -466,18 +472,23 @@ async def list_massagistas(
     q: Optional[str] = Query(None),
     verified_only: bool = Query(False),
 ):
-    query: Dict[str, Any] = {}
+    conditions = ["is_deleted = false"]
+    params: List[Any] = []
     if bairro:
-        query["bairro_slug"] = bairro
+        params.append(bairro)
+        conditions.append(f"bairro_slug = ${len(params)}")
     if verified_only:
-        query["verified"] = True
+        conditions.append("verified = true")
     if q:
-        query["$or"] = [
-            {"name": {"$regex": q, "$options": "i"}},
-            {"specialties": {"$regex": q, "$options": "i"}},
-            {"bairro": {"$regex": q, "$options": "i"}},
-        ]
-    docs = await db.massagistas.find(query, {"_id": 0}).to_list(200)
+        params.append(f"%{q}%")
+        idx = len(params)
+        conditions.append(
+            f"(name ILIKE ${idx} OR bairro ILIKE ${idx} "
+            f"OR EXISTS (SELECT 1 FROM unnest(specialties) s WHERE s ILIKE ${idx}))"
+        )
+    where = " AND ".join(conditions)
+    rows = await pool.fetch(f"SELECT * FROM massagistas WHERE {where} LIMIT 200", *params)
+    docs = [_massagista_out(_row(r)) for r in rows]
     if lat is not None and lng is not None:
         for d in docs:
             d["distance_km"] = round(haversine_km(lat, lng, d["lat"], d["lng"]), 2)
@@ -490,7 +501,9 @@ async def list_massagistas(
 
 @api.get("/massagistas/{mid}")
 async def get_massagista(mid: str):
-    doc = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    doc = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", mid
+    )))
     if not doc:
         raise HTTPException(404, "Massagista não encontrada")
     return doc
@@ -514,39 +527,53 @@ async def require_admin(request: Request) -> Dict[str, Any]:
 @api.get("/admin/verification/queue")
 async def verification_queue(request: Request):
     await require_admin(request)
-    docs = await db.massagistas.find(
-        {"$or": [{"verified": False}, {"verified": {"$exists": False}}]},
-        {"_id": 0},
-    ).to_list(500)
-    return docs
+    rows = await pool.fetch(
+        "SELECT * FROM massagistas WHERE is_deleted = false AND verified = false LIMIT 500"
+    )
+    return [_massagista_out(_row(r)) for r in rows]
 
 
 @api.get("/admin/verification/all")
 async def verification_all(request: Request):
     await require_admin(request)
-    docs = await db.massagistas.find({}, {"_id": 0}).to_list(500)
-    docs.sort(key=lambda x: (x.get("verified", False), x["name"]))
-    return docs
+    rows = await pool.fetch(
+        "SELECT * FROM massagistas WHERE is_deleted = false ORDER BY verified ASC, name ASC LIMIT 500"
+    )
+    return [_massagista_out(_row(r)) for r in rows]
+
+
+async def _set_verification(mid: str, status: str, verified: bool, id_check: bool, photo_check: bool,
+                             address_check: bool, verified_at: Optional[datetime], verified_by: Optional[str],
+                             notes: Optional[str]) -> Dict[str, Any]:
+    result = await pool.execute(
+        """
+        UPDATE massagistas SET
+            verified = $1, verification_status = $2, verification_id_check = $3,
+            verification_photo_check = $4, verification_address_check = $5,
+            verification_verified_at = $6, verification_verified_by = $7, verification_notes = $8
+        WHERE id = $9 AND is_deleted = false
+        """,
+        verified, status, id_check, photo_check, address_check, verified_at, verified_by, notes, mid,
+    )
+    if result == "UPDATE 0":
+        raise HTTPException(404, "Massagista não encontrada")
+    return {
+        "status": status,
+        "id_check": id_check,
+        "photo_check": photo_check,
+        "address_check": address_check,
+        "verified_at": verified_at.isoformat() if verified_at else None,
+        "verified_by": verified_by,
+        "notes": notes,
+    }
 
 
 @api.post("/admin/verification/{mid}/approve")
 async def approve_verification(mid: str, payload: VerificationAction, request: Request):
     admin = await require_admin(request)
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
-    if not m:
-        raise HTTPException(404, "Massagista não encontrada")
-    verification = {
-        "status": "verified",
-        "id_check": payload.id_check,
-        "photo_check": payload.photo_check,
-        "address_check": payload.address_check,
-        "verified_at": datetime.now(timezone.utc).isoformat(),
-        "verified_by": admin["email"],
-        "notes": payload.notes,
-    }
-    await db.massagistas.update_one(
-        {"id": mid},
-        {"$set": {"verified": True, "verification": verification}},
+    verification = await _set_verification(
+        mid, "verified", True, payload.id_check, payload.photo_check, payload.address_check,
+        datetime.now(timezone.utc), admin["email"], payload.notes,
     )
     return {"ok": True, "verification": verification}
 
@@ -554,21 +581,9 @@ async def approve_verification(mid: str, payload: VerificationAction, request: R
 @api.post("/admin/verification/{mid}/reject")
 async def reject_verification(mid: str, payload: VerificationAction, request: Request):
     admin = await require_admin(request)
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
-    if not m:
-        raise HTTPException(404, "Massagista não encontrada")
-    verification = {
-        "status": "rejected",
-        "id_check": payload.id_check,
-        "photo_check": payload.photo_check,
-        "address_check": payload.address_check,
-        "verified_at": datetime.now(timezone.utc).isoformat(),
-        "verified_by": admin["email"],
-        "notes": payload.notes,
-    }
-    await db.massagistas.update_one(
-        {"id": mid},
-        {"$set": {"verified": False, "verification": verification}},
+    verification = await _set_verification(
+        mid, "rejected", False, payload.id_check, payload.photo_check, payload.address_check,
+        datetime.now(timezone.utc), admin["email"], payload.notes,
     )
     return {"ok": True, "verification": verification}
 
@@ -576,23 +591,9 @@ async def reject_verification(mid: str, payload: VerificationAction, request: Re
 @api.post("/admin/verification/{mid}/revoke")
 async def revoke_verification(mid: str, request: Request):
     admin = await require_admin(request)
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
-    if not m:
-        raise HTTPException(404, "Massagista não encontrada")
-    await db.massagistas.update_one(
-        {"id": mid},
-        {"$set": {
-            "verified": False,
-            "verification": {
-                "status": "pending",
-                "id_check": False,
-                "photo_check": False,
-                "address_check": False,
-                "verified_at": None,
-                "verified_by": admin["email"],
-                "notes": "Revogada para nova verificação",
-            },
-        }},
+    await _set_verification(
+        mid, "pending", False, False, False, False,
+        None, admin["email"], "Revogada para nova verificação",
     )
     return {"ok": True}
 
@@ -606,7 +607,9 @@ def _public_file_url(storage_path: str) -> str:
 
 @api.get("/files/{path:path}")
 async def get_file(path: str):
-    record = await db.files.find_one({"storage_path": path, "is_deleted": False}, {"_id": 0})
+    record = _row(await pool.fetchrow(
+        "SELECT * FROM files WHERE storage_path = $1 AND is_deleted = false", path
+    ))
     if not record:
         raise HTTPException(404, "Arquivo não encontrado")
     data, content_type = get_object(path)
@@ -631,105 +634,110 @@ async def _admin_upload(admin: Dict[str, Any], mid: str, kind: str, file: Upload
     if len(data) > max_bytes:
         raise HTTPException(413, f"Arquivo excede o limite de {max_bytes // (1024 * 1024)}MB")
     result = put_object(storage_path, data, file.content_type)
-    record = {
-        "id": f"f_{uuid.uuid4().hex[:12]}",
-        "massagista_id": mid,
-        "kind": kind,
-        "storage_path": result["path"],
-        "content_type": file.content_type,
-        "size": result.get("size", len(data)),
-        "original_filename": file.filename,
-        "uploaded_by": admin["email"],
-        "is_deleted": False,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+    record_id = f"f_{uuid.uuid4().hex[:12]}"
+    size = result.get("size", len(data))
+    await pool.execute(
+        """
+        INSERT INTO files (id, massagista_id, kind, storage_path, content_type, size, original_filename, uploaded_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        """,
+        record_id, mid, kind, result["path"], file.content_type, size, file.filename, admin["email"],
+    )
+    return {
+        "id": record_id, "massagista_id": mid, "kind": kind, "storage_path": result["path"],
+        "content_type": file.content_type, "size": size, "original_filename": file.filename,
+        "uploaded_by": admin["email"], "url": _public_file_url(result["path"]),
     }
-    await db.files.insert_one(dict(record))
-    return {**record, "url": _public_file_url(result["path"])}
 
 
 @api.put("/admin/massagistas/{mid}")
 async def admin_update_massagista(mid: str, payload: ProfileUpdate, request: Request):
     await require_admin(request)
-    existing = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    existing = await pool.fetchval("SELECT 1 FROM massagistas WHERE id = $1 AND is_deleted = false", mid)
     if not existing:
         raise HTTPException(404, "Massagista não encontrada")
 
-    update: Dict[str, Any] = {}
     data = payload.model_dump(exclude_unset=True)
-    for k in ("name", "bio", "specialties", "experience_years", "languages", "ddd", "phone"):
+    sets: List[str] = []
+    params: List[Any] = []
+
+    def add(col: str, value: Any):
+        params.append(value)
+        sets.append(f"{col} = ${len(params)}")
+
+    for k in ("name", "bio", "experience_years", "ddd", "phone", "specialties", "languages"):
         if k in data:
-            update[k] = data[k]
+            add(k, data[k])
     if "bairro_slug" in data:
         b = BAIRRO_MAP.get(data["bairro_slug"])
         if not b:
             raise HTTPException(400, "Bairro inválido")
-        update.update({"bairro": b.name, "bairro_slug": b.slug, "lat": b.lat, "lng": b.lng})
+        add("bairro", b.name)
+        add("bairro_slug", b.slug)
+        add("lat", b.lat)
+        add("lng", b.lng)
     if "price_60" in data:
-        update["price_60"] = float(data["price_60"])
-        update["hourly_rate"] = float(data["price_60"])
+        add("price_60", float(data["price_60"]))
+        add("hourly_rate", float(data["price_60"]))
     if "price_90" in data:
-        update["price_90"] = float(data["price_90"])
+        add("price_90", float(data["price_90"]))
     if "price_120" in data:
-        update["price_120"] = float(data["price_120"])
+        add("price_120", float(data["price_120"]))
 
-    if update:
-        await db.massagistas.update_one({"id": mid}, {"$set": update})
-    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    if sets:
+        params.append(mid)
+        await pool.execute(f"UPDATE massagistas SET {', '.join(sets)} WHERE id = ${len(params)}", *params)
+
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", mid)))
     return fresh
-
 
 
 @api.post("/admin/massagistas/{mid}/photo")
 async def upload_photo(mid: str, request: Request, file: UploadFile = File(...)):
     admin = await require_admin(request)
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
-    if not m:
+    exists = await pool.fetchval("SELECT 1 FROM massagistas WHERE id = $1 AND is_deleted = false", mid)
+    if not exists:
         raise HTTPException(404, "Massagista não encontrada")
     f = await _admin_upload(admin, mid, "image", file)
     url = f["url"]
-    # Append to gallery; if first photo, also set as main_image
-    update = {"$push": {"gallery": url}}
-    if not m.get("main_image") or m.get("main_image", "").startswith("https://images.unsplash.com"):
-        # Don't auto-override the seed main; admin can set explicitly
-        pass
-    await db.massagistas.update_one({"id": mid}, update)
-    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    await pool.execute("UPDATE massagistas SET gallery = array_append(gallery, $1) WHERE id = $2", url, mid)
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", mid)))
     return {"url": url, "massagista": fresh}
 
 
 @api.delete("/admin/massagistas/{mid}/photo")
 async def delete_photo(mid: str, request: Request, url: str = Body(..., embed=True)):
     admin = await require_admin(request)
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", mid)))
     if not m:
         raise HTTPException(404, "Massagista não encontrada")
-    await db.massagistas.update_one({"id": mid}, {"$pull": {"gallery": url}})
+    await pool.execute("UPDATE massagistas SET gallery = array_remove(gallery, $1) WHERE id = $2", url, mid)
     # If main_image was this URL, fallback to first gallery item
     if m.get("main_image") == url:
         remaining = [g for g in m.get("gallery", []) if g != url]
         new_main = remaining[0] if remaining else ""
-        await db.massagistas.update_one({"id": mid}, {"$set": {"main_image": new_main}})
+        await pool.execute("UPDATE massagistas SET main_image = $1 WHERE id = $2", new_main, mid)
     # Soft-delete file record if it's an uploaded file
     if "/api/files/" in url:
         storage_path = url.split("/api/files/", 1)[1]
-        await db.files.update_one(
-            {"storage_path": storage_path},
-            {"$set": {"is_deleted": True, "deleted_by": admin["email"], "deleted_at": datetime.now(timezone.utc).isoformat()}},
+        await pool.execute(
+            "UPDATE files SET is_deleted = true, deleted_by = $1, deleted_at = $2 WHERE storage_path = $3",
+            admin["email"], datetime.now(timezone.utc), storage_path,
         )
-    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", mid)))
     return {"ok": True, "massagista": fresh}
 
 
 @api.post("/admin/massagistas/{mid}/set-main")
 async def set_main_image(mid: str, request: Request, url: str = Body(..., embed=True)):
     await require_admin(request)
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", mid)))
     if not m:
         raise HTTPException(404, "Massagista não encontrada")
     if url not in (m.get("gallery") or []):
         raise HTTPException(400, "URL precisa estar na galeria primeiro")
-    await db.massagistas.update_one({"id": mid}, {"$set": {"main_image": url}})
-    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    await pool.execute("UPDATE massagistas SET main_image = $1 WHERE id = $2", url, mid)
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", mid)))
     return {"ok": True, "massagista": fresh}
 
 
@@ -741,7 +749,7 @@ async def upload_video(
     thumb: Optional[UploadFile] = File(None),
 ):
     admin = await require_admin(request)
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", mid)))
     if not m:
         raise HTTPException(404, "Massagista não encontrada")
     f = await _admin_upload(admin, mid, "video", file)
@@ -750,33 +758,36 @@ async def upload_video(
     prev = m.get("video_url", "")
     if prev and "/api/files/" in prev:
         storage_path = prev.split("/api/files/", 1)[1]
-        await db.files.update_one(
-            {"storage_path": storage_path},
-            {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}},
+        await pool.execute(
+            "UPDATE files SET is_deleted = true, deleted_at = $1 WHERE storage_path = $2",
+            datetime.now(timezone.utc), storage_path,
         )
-    update = {"video_url": url}
     # If thumbnail file provided (extracted from video on client), use it
+    video_thumb = None
     if thumb is not None:
         tf = await _admin_upload(admin, mid, "image", thumb)
-        update["video_thumb"] = tf["url"]
+        video_thumb = tf["url"]
     elif not m.get("video_thumb"):
-        update["video_thumb"] = m.get("main_image") or (m.get("gallery") or [""])[0]
-    await db.massagistas.update_one({"id": mid}, {"$set": update})
-    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+        video_thumb = m.get("main_image") or (m.get("gallery") or [""])[0]
+    if video_thumb is not None:
+        await pool.execute("UPDATE massagistas SET video_url = $1, video_thumb = $2 WHERE id = $3", url, video_thumb, mid)
+    else:
+        await pool.execute("UPDATE massagistas SET video_url = $1 WHERE id = $2", url, mid)
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", mid)))
     return {"url": url, "massagista": fresh}
 
 
 @api.post("/admin/massagistas/{mid}/video-thumb")
 async def upload_video_thumb(mid: str, request: Request, file: UploadFile = File(...)):
     admin = await require_admin(request)
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", mid)))
     if not m:
         raise HTTPException(404, "Massagista não encontrada")
     if not m.get("video_url"):
         raise HTTPException(400, "Profissional não possui vídeo")
     f = await _admin_upload(admin, mid, "image", file)
-    await db.massagistas.update_one({"id": mid}, {"$set": {"video_thumb": f["url"]}})
-    fresh = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    await pool.execute("UPDATE massagistas SET video_thumb = $1 WHERE id = $2", f["url"], mid)
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", mid)))
     return {"url": f["url"], "massagista": fresh}
 
 
@@ -800,38 +811,39 @@ async def auth_session(request: Request, response: Response):
     session_token = data["session_token"]
 
     # Upsert user
-    user = await db.users.find_one({"email": email}, {"_id": 0})
     is_admin_env = email.lower() in ADMIN_EMAILS
+    user = _row(await pool.fetchrow("SELECT * FROM users WHERE email = $1", email))
     if not user:
         # First-ever user becomes admin automatically (bootstrap),
         # or any email in ADMIN_EMAILS env var
-        total_users = await db.users.count_documents({})
+        total_users = await pool.fetchval("SELECT count(*) FROM users")
         is_admin = is_admin_env or total_users == 0
         user_id = f"user_{uuid.uuid4().hex[:12]}"
+        created_at = datetime.now(timezone.utc)
+        await pool.execute(
+            "INSERT INTO users (user_id, email, name, picture, is_admin, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            user_id, email, name, picture, is_admin, created_at,
+        )
         user = {
-            "user_id": user_id,
-            "email": email,
-            "name": name,
-            "picture": picture,
-            "is_admin": is_admin,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "user_id": user_id, "email": email, "name": name, "picture": picture,
+            "is_admin": is_admin, "created_at": created_at.isoformat(),
         }
-        await db.users.insert_one(dict(user))
     else:
-        update = {"name": name, "picture": picture}
-        if is_admin_env and not user.get("is_admin"):
-            update["is_admin"] = True
-        await db.users.update_one({"email": email}, {"$set": update})
-        user.update(update)
+        is_admin = bool(user.get("is_admin")) or is_admin_env
+        await pool.execute(
+            "UPDATE users SET name = $1, picture = $2, is_admin = $3 WHERE email = $4",
+            name, picture, is_admin, email,
+        )
+        user["name"] = name
+        user["picture"] = picture
+        user["is_admin"] = is_admin
 
     # Persist session
     expires = datetime.now(timezone.utc) + timedelta(days=7)
-    await db.user_sessions.insert_one({
-        "user_id": user["user_id"],
-        "session_token": session_token,
-        "expires_at": expires.isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    await pool.execute(
+        "INSERT INTO user_sessions (session_token, user_id, expires_at) VALUES ($1,$2,$3)",
+        session_token, user["user_id"], expires,
+    )
 
     # Set httpOnly cookie
     response.set_cookie(
@@ -867,7 +879,7 @@ async def auth_logout(
     if not token and authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
     if token:
-        await db.user_sessions.delete_one({"session_token": token})
+        await pool.execute("DELETE FROM user_sessions WHERE session_token = $1", token)
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
 
@@ -893,7 +905,9 @@ async def create_booking(payload: BookingCreate, request: Request):
     )
     if not user:
         raise HTTPException(401, "Faça login para reservar")
-    m = await db.massagistas.find_one({"id": payload.massagista_id}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", payload.massagista_id
+    )))
     if not m:
         raise HTTPException(404, "Massagista não encontrada")
     if payload.location_type not in ("studio", "home"):
@@ -901,28 +915,19 @@ async def create_booking(payload: BookingCreate, request: Request):
     if payload.location_type == "home" and not (payload.address and payload.address.strip()):
         raise HTTPException(400, "Endereço obrigatório para atendimento em domicílio")
     amount = _amount_for(m, payload.duration)
-    booking = {
-        "id": f"b_{uuid.uuid4().hex[:10]}",
-        "user_id": user["user_id"],
-        "user_email": user["email"],
-        "massagista_id": m["id"],
-        "massagista_name": m["name"],
-        "massagista_image": m["main_image"],
-        "bairro": m["bairro"],
-        "date": payload.date,
-        "time": payload.time,
-        "duration": payload.duration,
-        "location_type": payload.location_type,
-        "address": payload.address,
-        "notes": payload.notes,
-        "amount": amount,
-        "currency": "brl",
-        "status": "pending_payment",
-        "payment_session_id": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.bookings.insert_one(dict(booking))
-    return booking
+    booking_id = f"b_{uuid.uuid4().hex[:10]}"
+    row = await pool.fetchrow(
+        """
+        INSERT INTO bookings (id, user_id, user_email, massagista_id, massagista_name, massagista_image,
+                               bairro, date, time, duration, location_type, address, notes, amount)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        RETURNING *
+        """,
+        booking_id, user["user_id"], user["email"], m["id"], m["name"], m["main_image"], m["bairro"],
+        _parse_date(payload.date), _parse_time(payload.time), payload.duration, payload.location_type,
+        payload.address, payload.notes, amount,
+    )
+    return _row(row)
 
 
 @api.get("/bookings/me")
@@ -933,8 +938,10 @@ async def my_bookings(request: Request):
     )
     if not user:
         raise HTTPException(401, "Not authenticated")
-    docs = await db.bookings.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return docs
+    rows = await pool.fetch(
+        "SELECT * FROM bookings WHERE user_id = $1 ORDER BY created_at DESC LIMIT 200", user["user_id"]
+    )
+    return _rows(rows)
 
 
 @api.get("/bookings/{bid}")
@@ -945,21 +952,15 @@ async def get_booking(bid: str, request: Request):
     )
     if not user:
         raise HTTPException(401, "Not authenticated")
-    doc = await db.bookings.find_one({"id": bid, "user_id": user["user_id"]}, {"_id": 0})
+    doc = _row(await pool.fetchrow("SELECT * FROM bookings WHERE id = $1 AND user_id = $2", bid, user["user_id"]))
     if not doc:
         raise HTTPException(404, "Reserva não encontrada")
     return doc
 
 
 # ---------------------------------------------------------------------------
-# Stripe checkout
+# Stripe checkout (SDK oficial `stripe` — ver .ai/context/CONTRACTS.md #9)
 # ---------------------------------------------------------------------------
-def _stripe(http_request: Request) -> StripeCheckout:
-    host_url = str(http_request.base_url).rstrip("/")
-    webhook_url = f"{host_url}/api/webhook/stripe"
-    return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-
-
 @api.post("/checkout/session")
 async def create_checkout(payload: CheckoutCreateReq, http_request: Request):
     user = await get_current_user(
@@ -968,9 +969,9 @@ async def create_checkout(payload: CheckoutCreateReq, http_request: Request):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    booking = await db.bookings.find_one(
-        {"id": payload.booking_id, "user_id": user["user_id"]}, {"_id": 0}
-    )
+    booking = _row(await pool.fetchrow(
+        "SELECT * FROM bookings WHERE id = $1 AND user_id = $2", payload.booking_id, user["user_id"]
+    ))
     if not booking:
         raise HTTPException(404, "Reserva não encontrada")
 
@@ -979,11 +980,17 @@ async def create_checkout(payload: CheckoutCreateReq, http_request: Request):
     cancel_url = f"{origin}/reserva/{booking['id']}?cancelled=1"
 
     # Amount comes from DB only (server-side)
-    amount_usd_brl = float(booking["amount"])  # BRL
-    stripe = _stripe(http_request)
-    req = CheckoutSessionRequest(
-        amount=amount_usd_brl,
-        currency="brl",
+    amount_brl = float(booking["amount"])
+    session = await stripe.checkout.Session.create_async(
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": "brl",
+                "product_data": {"name": f"Reserva · {booking['massagista_name']}"},
+                "unit_amount": round(amount_brl * 100),
+            },
+            "quantity": 1,
+        }],
         success_url=success_url,
         cancel_url=cancel_url,
         metadata={
@@ -992,67 +999,47 @@ async def create_checkout(payload: CheckoutCreateReq, http_request: Request):
             "user_email": user["email"],
         },
     )
-    session: CheckoutSessionResponse = await stripe.create_checkout_session(req)
 
     # Save payment transaction
-    await db.payment_transactions.insert_one({
-        "session_id": session.session_id,
-        "booking_id": booking["id"],
-        "user_id": user["user_id"],
-        "user_email": user["email"],
-        "amount": amount_usd_brl,
-        "currency": "brl",
-        "status": "initiated",
-        "payment_status": "pending",
-        "metadata": {"booking_id": booking["id"]},
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
-
-    await db.bookings.update_one(
-        {"id": booking["id"]},
-        {"$set": {"payment_session_id": session.session_id}},
+    await pool.execute(
+        """
+        INSERT INTO payment_transactions (session_id, booking_id, user_id, user_email, amount, status, payment_status)
+        VALUES ($1,$2,$3,$4,$5,'initiated','pending')
+        """,
+        session.id, booking["id"], user["user_id"], user["email"], amount_brl,
     )
 
-    return {"url": session.url, "session_id": session.session_id}
+    await pool.execute("UPDATE bookings SET payment_session_id = $1 WHERE id = $2", session.id, booking["id"])
+
+    return {"url": session.url, "session_id": session.id}
 
 
 @api.get("/checkout/status/{session_id}")
 async def checkout_status(session_id: str, http_request: Request):
-    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    tx = _row(await pool.fetchrow("SELECT * FROM payment_transactions WHERE session_id = $1", session_id))
     if not tx:
         raise HTTPException(404, "Pagamento não encontrado")
 
-    stripe = _stripe(http_request)
-    status: CheckoutStatusResponse = await stripe.get_checkout_status(session_id)
+    session = await stripe.checkout.Session.retrieve_async(session_id)
 
     # Idempotent update
-    booking_already_confirmed = False
-    booking = await db.bookings.find_one({"id": tx["booking_id"]}, {"_id": 0})
-    if booking and booking.get("status") == "confirmed":
-        booking_already_confirmed = True
+    booking = _row(await pool.fetchrow("SELECT * FROM bookings WHERE id = $1", tx["booking_id"]))
+    booking_already_confirmed = bool(booking and booking.get("status") == "confirmed")
 
-    new_status = "completed" if status.payment_status == "paid" else status.status
-    await db.payment_transactions.update_one(
-        {"session_id": session_id},
-        {"$set": {
-            "status": new_status,
-            "payment_status": status.payment_status,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }},
+    new_status = "completed" if session.payment_status == "paid" else session.status
+    await pool.execute(
+        "UPDATE payment_transactions SET status = $1, payment_status = $2, updated_at = $3 WHERE session_id = $4",
+        new_status, session.payment_status, datetime.now(timezone.utc), session_id,
     )
 
-    if status.payment_status == "paid" and not booking_already_confirmed:
-        await db.bookings.update_one(
-            {"id": tx["booking_id"]},
-            {"$set": {"status": "confirmed"}},
-        )
+    if session.payment_status == "paid" and not booking_already_confirmed:
+        await pool.execute("UPDATE bookings SET status = 'confirmed' WHERE id = $1", tx["booking_id"])
 
     return {
-        "status": status.status,
-        "payment_status": status.payment_status,
-        "amount_total": status.amount_total,
-        "currency": status.currency,
+        "status": session.status,
+        "payment_status": session.payment_status,
+        "amount_total": session.amount_total,
+        "currency": session.currency,
         "booking_id": tx["booking_id"],
     }
 
@@ -1061,26 +1048,26 @@ async def checkout_status(session_id: str, http_request: Request):
 async def stripe_webhook(request: Request):
     body = await request.body()
     signature = request.headers.get("Stripe-Signature")
-    stripe = _stripe(request)
     try:
-        evt = await stripe.handle_webhook(body, signature)
+        evt = stripe.Webhook.construct_event(body, signature, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
         logger.exception("Webhook error: %s", e)
         raise HTTPException(400, "Bad webhook")
-    if evt.session_id:
-        await db.payment_transactions.update_one(
-            {"session_id": evt.session_id},
-            {"$set": {
-                "payment_status": evt.payment_status,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }},
+
+    obj = evt["data"]["object"]
+    if evt["type"] in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+        session_id = obj["id"]
+        payment_status = obj.get("payment_status", "unpaid")
+        await pool.execute(
+            "UPDATE payment_transactions SET payment_status = $1, updated_at = $2 WHERE session_id = $3",
+            payment_status, datetime.now(timezone.utc), session_id,
         )
-        if evt.payment_status == "paid":
-            tx = await db.payment_transactions.find_one({"session_id": evt.session_id}, {"_id": 0})
+        if payment_status == "paid":
+            tx = _row(await pool.fetchrow("SELECT * FROM payment_transactions WHERE session_id = $1", session_id))
             if tx:
-                await db.bookings.update_one(
-                    {"id": tx["booking_id"], "status": {"$ne": "confirmed"}},
-                    {"$set": {"status": "confirmed"}},
+                await pool.execute(
+                    "UPDATE bookings SET status = 'confirmed' WHERE id = $1 AND status != 'confirmed'",
+                    tx["booking_id"],
                 )
     return {"received": True}
 
@@ -1096,38 +1083,37 @@ async def create_review(bid: str, payload: ReviewCreate, request: Request):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    booking = await db.bookings.find_one({"id": bid, "user_id": user["user_id"]}, {"_id": 0})
+    booking = _row(await pool.fetchrow("SELECT * FROM bookings WHERE id = $1 AND user_id = $2", bid, user["user_id"]))
     if not booking:
         raise HTTPException(404, "Reserva não encontrada")
     if booking["status"] != "confirmed":
         raise HTTPException(400, "Só é possível avaliar reservas confirmadas")
-    existing = await db.reviews.find_one({"booking_id": bid}, {"_id": 0})
+    existing = await pool.fetchval("SELECT 1 FROM reviews WHERE booking_id = $1", bid)
     if existing:
         raise HTTPException(400, "Você já avaliou esta reserva")
 
-    review = {
-        "id": f"r_{uuid.uuid4().hex[:10]}",
-        "booking_id": bid,
-        "massagista_id": booking["massagista_id"],
-        "user_id": user["user_id"],
-        "user_name": user.get("name", "Cliente"),
-        "user_picture": user.get("picture", ""),
-        "rating": int(payload.rating),
-        "comment": (payload.comment or "").strip() or None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.reviews.insert_one(dict(review))
+    review_id = f"r_{uuid.uuid4().hex[:10]}"
+    comment = (payload.comment or "").strip() or None
+    review = _row(await pool.fetchrow(
+        """
+        INSERT INTO reviews (id, booking_id, massagista_id, user_id, user_name, user_picture, rating, comment)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        RETURNING *
+        """,
+        review_id, bid, booking["massagista_id"], user["user_id"], user.get("name", "Cliente"),
+        user.get("picture", ""), int(payload.rating), comment,
+    ))
 
     # Update massagista aggregate rating
-    m = await db.massagistas.find_one({"id": booking["massagista_id"]}, {"_id": 0})
+    m = _row(await pool.fetchrow("SELECT reviews, rating FROM massagistas WHERE id = $1", booking["massagista_id"]))
     if m:
         old_count = int(m.get("reviews", 0))
         old_rating = float(m.get("rating", 0.0))
         new_count = old_count + 1
         new_rating = round((old_rating * old_count + review["rating"]) / new_count, 2)
-        await db.massagistas.update_one(
-            {"id": booking["massagista_id"]},
-            {"$set": {"reviews": new_count, "rating": new_rating}},
+        await pool.execute(
+            "UPDATE massagistas SET reviews = $1, rating = $2 WHERE id = $3",
+            new_count, new_rating, booking["massagista_id"],
         )
 
     return review
@@ -1135,8 +1121,10 @@ async def create_review(bid: str, payload: ReviewCreate, request: Request):
 
 @api.get("/massagistas/{mid}/reviews")
 async def list_reviews(mid: str, limit: int = Query(20, le=100)):
-    docs = await db.reviews.find({"massagista_id": mid}, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    return docs
+    rows = await pool.fetch(
+        "SELECT * FROM reviews WHERE massagista_id = $1 ORDER BY created_at DESC LIMIT $2", mid, limit
+    )
+    return _rows(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -1149,7 +1137,7 @@ async def _require_owner(request: Request, mid: str) -> Dict[str, Any]:
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    m = _row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", mid))
     if not m:
         raise HTTPException(404, "Perfil não encontrado")
     if m.get("owner_user_id") != user["user_id"] and not user.get("is_admin"):
@@ -1165,7 +1153,9 @@ async def my_profile(request: Request):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    doc = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    doc = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )))
     return {"profile": doc}
 
 
@@ -1177,51 +1167,34 @@ async def create_my_profile(payload: ProfileCreate, request: Request):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    existing = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    existing = await pool.fetchval("SELECT 1 FROM massagistas WHERE owner_user_id = $1", user["user_id"])
     if existing:
         raise HTTPException(400, "Você já tem um perfil profissional")
     b = BAIRRO_MAP.get(payload.bairro_slug)
     if not b:
         raise HTTPException(400, "Bairro inválido")
     price_60 = float(payload.price_60)
-    doc = {
-        "id": f"m_{uuid.uuid4().hex[:10]}",
-        "owner_user_id": user["user_id"],
-        "name": payload.name,
-        "bairro": b.name,
-        "bairro_slug": b.slug,
-        "lat": b.lat,
-        "lng": b.lng,
-        "rating": 0.0,
-        "reviews": 0,
-        "bio": payload.bio,
-        "specialties": payload.specialties,
-        "hourly_rate": price_60,
-        "price_60": price_60,
-        "price_90": float(payload.price_90) if payload.price_90 else round(price_60 * 1.4, 2),
-        "price_120": float(payload.price_120) if payload.price_120 else round(price_60 * 1.8, 2),
-        "main_image": user.get("picture", ""),
-        "gallery": [user.get("picture")] if user.get("picture") else [],
-        "video_url": "",
-        "video_thumb": "",
-        "experience_years": int(payload.experience_years),
-        "languages": payload.languages,
-        "ddd": (payload.ddd or "").strip(),
-        "phone": (payload.phone or "").strip(),
-        "verified": False,
-        "verification": {
-            "status": "pending",
-            "id_check": False,
-            "photo_check": False,
-            "address_check": False,
-            "verified_at": None,
-            "verified_by": None,
-            "notes": "Auto-cadastrado — aguardando verificação",
-        },
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.massagistas.insert_one(dict(doc))
-    return doc
+    price_90 = float(payload.price_90) if payload.price_90 else round(price_60 * 1.4, 2)
+    price_120 = float(payload.price_120) if payload.price_120 else round(price_60 * 1.8, 2)
+    mid = f"m_{uuid.uuid4().hex[:10]}"
+    gallery = [user["picture"]] if user.get("picture") else []
+    row = await pool.fetchrow(
+        """
+        INSERT INTO massagistas (
+            id, owner_user_id, name, bairro, bairro_slug, lat, lng, rating, reviews, bio, specialties,
+            hourly_rate, price_60, price_90, price_120, main_image, gallery, video_url, video_thumb,
+            experience_years, languages, ddd, phone, verified, verification_status, verification_notes
+        ) VALUES (
+            $1,$2,$3,$4,$5,$6,$7,0,0,$8,$9,$10,$10,$11,$12,$13,$14,'','',$15,$16,$17,$18,false,
+            'pending', 'Auto-cadastrado — aguardando verificação'
+        )
+        RETURNING *
+        """,
+        mid, user["user_id"], payload.name, b.name, b.slug, b.lat, b.lng, payload.bio, payload.specialties,
+        price_60, price_90, price_120, user.get("picture", ""), gallery,
+        int(payload.experience_years), payload.languages, (payload.ddd or "").strip(), (payload.phone or "").strip(),
+    )
+    return _massagista_out(_row(row))
 
 
 @api.put("/me/profile")
@@ -1232,31 +1205,44 @@ async def update_my_profile(payload: ProfileUpdate, request: Request):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    existing = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    existing = _row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    ))
     if not existing:
         raise HTTPException(404, "Perfil não encontrado")
 
-    update: Dict[str, Any] = {}
     data = payload.model_dump(exclude_unset=True)
+    sets: List[str] = []
+    params: List[Any] = []
+
+    def add(col: str, value: Any):
+        params.append(value)
+        sets.append(f"{col} = ${len(params)}")
+
     for k in ("name", "bio", "specialties", "experience_years", "languages"):
         if k in data:
-            update[k] = data[k]
+            add(k, data[k])
     if "bairro_slug" in data:
         b = BAIRRO_MAP.get(data["bairro_slug"])
         if not b:
             raise HTTPException(400, "Bairro inválido")
-        update.update({"bairro": b.name, "bairro_slug": b.slug, "lat": b.lat, "lng": b.lng})
+        add("bairro", b.name)
+        add("bairro_slug", b.slug)
+        add("lat", b.lat)
+        add("lng", b.lng)
     if "price_60" in data:
-        update["price_60"] = float(data["price_60"])
-        update["hourly_rate"] = float(data["price_60"])
+        add("price_60", float(data["price_60"]))
+        add("hourly_rate", float(data["price_60"]))
     if "price_90" in data:
-        update["price_90"] = float(data["price_90"])
+        add("price_90", float(data["price_90"]))
     if "price_120" in data:
-        update["price_120"] = float(data["price_120"])
+        add("price_120", float(data["price_120"]))
 
-    if update:
-        await db.massagistas.update_one({"id": existing["id"]}, {"$set": update})
-    fresh = await db.massagistas.find_one({"id": existing["id"]}, {"_id": 0})
+    if sets:
+        params.append(existing["id"])
+        await pool.execute(f"UPDATE massagistas SET {', '.join(sets)} WHERE id = ${len(params)}", *params)
+
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", existing["id"])))
     return fresh
 
 
@@ -1268,17 +1254,21 @@ async def my_profile_photo(request: Request, file: UploadFile = File(...)):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )))
     if not m:
         raise HTTPException(404, "Crie seu perfil primeiro")
     f = await _admin_upload({"email": user["email"]}, m["id"], "image", file)
     url = f["url"]
-    update = {"$push": {"gallery": url}}
-    # If no real main image yet (or pointing at google picture), set this as main
+    # If no real main image yet (or pointing at google picture), set this as main too
     if not m.get("main_image") or m["main_image"] == user.get("picture"):
-        update["$set"] = {"main_image": url}
-    await db.massagistas.update_one({"id": m["id"]}, update)
-    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+        await pool.execute(
+            "UPDATE massagistas SET gallery = array_append(gallery, $1), main_image = $1 WHERE id = $2", url, m["id"]
+        )
+    else:
+        await pool.execute("UPDATE massagistas SET gallery = array_append(gallery, $1) WHERE id = $2", url, m["id"])
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", m["id"])))
     return {"url": url, "massagista": fresh}
 
 
@@ -1290,20 +1280,24 @@ async def my_delete_photo(request: Request, url: str = Body(..., embed=True)):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )))
     if not m:
         raise HTTPException(404, "Perfil não encontrado")
-    await db.massagistas.update_one({"id": m["id"]}, {"$pull": {"gallery": url}})
+    await pool.execute("UPDATE massagistas SET gallery = array_remove(gallery, $1) WHERE id = $2", url, m["id"])
     if m.get("main_image") == url:
         remaining = [g for g in m.get("gallery", []) if g != url]
-        await db.massagistas.update_one({"id": m["id"]}, {"$set": {"main_image": remaining[0] if remaining else ""}})
+        await pool.execute(
+            "UPDATE massagistas SET main_image = $1 WHERE id = $2", remaining[0] if remaining else "", m["id"]
+        )
     if "/api/files/" in url:
         storage_path = url.split("/api/files/", 1)[1]
-        await db.files.update_one(
-            {"storage_path": storage_path},
-            {"$set": {"is_deleted": True, "deleted_by": user["email"], "deleted_at": datetime.now(timezone.utc).isoformat()}},
+        await pool.execute(
+            "UPDATE files SET is_deleted = true, deleted_by = $1, deleted_at = $2 WHERE storage_path = $3",
+            user["email"], datetime.now(timezone.utc), storage_path,
         )
-    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", m["id"])))
     return {"ok": True, "massagista": fresh}
 
 
@@ -1316,62 +1310,58 @@ async def whatsapp_click(payload: WhatsAppClick, request: Request):
         session_token=request.cookies.get("session_token"),
         authorization=request.headers.get("authorization"),
     )
-    m = await db.massagistas.find_one({"id": payload.massagista_id}, {"_id": 0})
+    m = _row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", payload.massagista_id))
     if not m:
         raise HTTPException(404, "Massagista não encontrada")
-    click = {
-        "id": f"wc_{uuid.uuid4().hex[:10]}",
-        "massagista_id": payload.massagista_id,
-        "massagista_name": m["name"],
-        "user_id": user["user_id"] if user else None,
-        "user_email": user["email"] if user else None,
-        "user_name": user.get("name") if user else None,
-        "source": payload.source or "detail",
-        "user_agent": request.headers.get("user-agent", "")[:300],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.whatsapp_clicks.insert_one(dict(click))
+    click_id = f"wc_{uuid.uuid4().hex[:10]}"
+    await pool.execute(
+        """
+        INSERT INTO whatsapp_clicks (id, massagista_id, massagista_name, user_id, user_email, user_name, source, user_agent)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        """,
+        click_id, payload.massagista_id, m["name"],
+        user["user_id"] if user else None, user["email"] if user else None, user.get("name") if user else None,
+        payload.source or "detail", request.headers.get("user-agent", "")[:300],
+    )
     return {"ok": True}
 
 
 @api.get("/admin/whatsapp/stats")
 async def whatsapp_stats(request: Request):
     await require_admin(request)
-    pipeline = [
-        {"$group": {
-            "_id": "$massagista_id",
-            "clicks": {"$sum": 1},
-            "unique_users": {"$addToSet": "$user_id"},
-            "last_click_at": {"$max": "$created_at"},
-        }},
-    ]
-    raw = await db.whatsapp_clicks.aggregate(pipeline).to_list(500)
-    by_id = {r["_id"]: r for r in raw}
+    click_rows = await pool.fetch(
+        """
+        SELECT massagista_id, count(*) AS clicks,
+               count(DISTINCT user_id) FILTER (WHERE user_id IS NOT NULL) AS unique_users,
+               max(created_at) AS last_click_at
+        FROM whatsapp_clicks
+        GROUP BY massagista_id
+        """
+    )
+    by_id = {r["massagista_id"]: _row(r) for r in click_rows}
 
     # Confirmed bookings per massagista
-    bookings_pipeline = [
-        {"$match": {"status": "confirmed"}},
-        {"$group": {"_id": "$massagista_id", "confirmed": {"$sum": 1}}},
-    ]
-    booked_raw = await db.bookings.aggregate(bookings_pipeline).to_list(500)
-    booked_by_id = {r["_id"]: r["confirmed"] for r in booked_raw}
+    booked_rows = await pool.fetch(
+        "SELECT massagista_id, count(*) AS confirmed FROM bookings WHERE status = 'confirmed' GROUP BY massagista_id"
+    )
+    booked_by_id = {r["massagista_id"]: r["confirmed"] for r in booked_rows}
 
     # Build result with massagista name
-    docs = await db.massagistas.find({}, {"_id": 0, "id": 1, "name": 1, "bairro": 1, "main_image": 1}).to_list(500)
+    docs = await pool.fetch("SELECT id, name, bairro, main_image FROM massagistas WHERE is_deleted = false LIMIT 500")
     out = []
     total_clicks = 0
     total_confirmed = 0
     for d in docs:
         r = by_id.get(d["id"], {})
         clicks = int(r.get("clicks", 0))
-        unique = len([u for u in r.get("unique_users", []) if u])
+        unique = int(r.get("unique_users", 0))
         confirmed = int(booked_by_id.get(d["id"], 0))
         conversion = round((confirmed / clicks) * 100, 1) if clicks > 0 else None
         out.append({
             "massagista_id": d["id"],
             "name": d["name"],
-            "bairro": d.get("bairro"),
-            "main_image": d.get("main_image"),
+            "bairro": d["bairro"],
+            "main_image": d["main_image"],
             "clicks": clicks,
             "unique_users": unique,
             "confirmed_bookings": confirmed,
@@ -1395,49 +1385,40 @@ async def whatsapp_stats(request: Request):
 @api.get("/admin/bookings")
 async def admin_list_bookings(request: Request, status: Optional[str] = Query(None), limit: int = Query(100, le=500)):
     await require_admin(request)
-    query: Dict[str, Any] = {}
     if status:
-        query["status"] = status
-    docs = await db.bookings.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    return docs
+        rows = await pool.fetch(
+            "SELECT * FROM bookings WHERE status = $1 ORDER BY created_at DESC LIMIT $2", status, limit
+        )
+    else:
+        rows = await pool.fetch("SELECT * FROM bookings ORDER BY created_at DESC LIMIT $1", limit)
+    return _rows(rows)
 
 
 @api.post("/admin/bookings/manual")
 async def admin_manual_booking(payload: ManualBookingCreate, request: Request):
     admin = await require_admin(request)
-    m = await db.massagistas.find_one({"id": payload.massagista_id}, {"_id": 0})
+    m = _row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", payload.massagista_id))
     if not m:
         raise HTTPException(404, "Massagista não encontrada")
-    user = await db.users.find_one({"email": payload.user_email.strip().lower()}, {"_id": 0})
+    user = _row(await pool.fetchrow("SELECT * FROM users WHERE email = $1", payload.user_email.strip().lower()))
     if not user:
         raise HTTPException(404, "Cliente não encontrado — peça para o cliente fazer login pelo menos uma vez antes")
     amount = _amount_for(m, payload.duration)
     method = payload.payment_method if payload.payment_method in ("whatsapp", "pix", "cash", "manual") else "manual"
-    booking = {
-        "id": f"b_{uuid.uuid4().hex[:10]}",
-        "user_id": user["user_id"],
-        "user_email": user["email"],
-        "massagista_id": m["id"],
-        "massagista_name": m["name"],
-        "massagista_image": m["main_image"],
-        "bairro": m["bairro"],
-        "date": payload.date,
-        "time": payload.time,
-        "duration": payload.duration,
-        "location_type": "studio",
-        "address": None,
-        "notes": payload.notes,
-        "amount": amount,
-        "currency": "brl",
-        "status": "confirmed",
-        "payment_session_id": None,
-        "payment_method": method,
-        "manual_confirmed_by": admin["email"],
-        "manual_confirmed_at": datetime.now(timezone.utc).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.bookings.insert_one(dict(booking))
-    return booking
+    booking_id = f"b_{uuid.uuid4().hex[:10]}"
+    row = await pool.fetchrow(
+        """
+        INSERT INTO bookings (id, user_id, user_email, massagista_id, massagista_name, massagista_image, bairro,
+                               date, time, duration, location_type, notes, amount, status, payment_method,
+                               manual_confirmed_by, manual_confirmed_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'studio',$11,$12,'confirmed',$13,$14,$15)
+        RETURNING *
+        """,
+        booking_id, user["user_id"], user["email"], m["id"], m["name"], m["main_image"], m["bairro"],
+        _parse_date(payload.date), _parse_time(payload.time), payload.duration, payload.notes, amount,
+        method, admin["email"], datetime.now(timezone.utc),
+    )
+    return _row(row)
 
 
 @api.post("/me/profile/set-main")
@@ -1448,13 +1429,15 @@ async def my_set_main(request: Request, url: str = Body(..., embed=True)):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )))
     if not m:
         raise HTTPException(404, "Perfil não encontrado")
     if url not in (m.get("gallery") or []):
         raise HTTPException(400, "URL precisa estar na galeria primeiro")
-    await db.massagistas.update_one({"id": m["id"]}, {"$set": {"main_image": url}})
-    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+    await pool.execute("UPDATE massagistas SET main_image = $1 WHERE id = $2", url, m["id"])
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", m["id"])))
     return {"ok": True, "massagista": fresh}
 
 
@@ -1470,7 +1453,9 @@ async def my_profile_video(
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )))
     if not m:
         raise HTTPException(404, "Crie seu perfil primeiro")
     f = await _admin_upload({"email": user["email"]}, m["id"], "video", file)
@@ -1478,15 +1463,21 @@ async def my_profile_video(
     prev = m.get("video_url", "")
     if prev and "/api/files/" in prev:
         sp = prev.split("/api/files/", 1)[1]
-        await db.files.update_one({"storage_path": sp}, {"$set": {"is_deleted": True, "deleted_at": datetime.now(timezone.utc).isoformat()}})
-    update = {"video_url": url}
+        await pool.execute(
+            "UPDATE files SET is_deleted = true, deleted_at = $1 WHERE storage_path = $2",
+            datetime.now(timezone.utc), sp,
+        )
+    video_thumb = None
     if thumb is not None:
         tf = await _admin_upload({"email": user["email"]}, m["id"], "image", thumb)
-        update["video_thumb"] = tf["url"]
+        video_thumb = tf["url"]
     elif not m.get("video_thumb"):
-        update["video_thumb"] = m.get("main_image") or (m.get("gallery") or [""])[0]
-    await db.massagistas.update_one({"id": m["id"]}, {"$set": update})
-    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+        video_thumb = m.get("main_image") or (m.get("gallery") or [""])[0]
+    if video_thumb is not None:
+        await pool.execute("UPDATE massagistas SET video_url = $1, video_thumb = $2 WHERE id = $3", url, video_thumb, m["id"])
+    else:
+        await pool.execute("UPDATE massagistas SET video_url = $1 WHERE id = $2", url, m["id"])
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", m["id"])))
     return {"url": url, "massagista": fresh}
 
 
@@ -1498,14 +1489,16 @@ async def my_profile_video_thumb(request: Request, file: UploadFile = File(...))
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )))
     if not m:
         raise HTTPException(404, "Crie seu perfil primeiro")
     if not m.get("video_url"):
         raise HTTPException(400, "Você ainda não tem vídeo")
     f = await _admin_upload({"email": user["email"]}, m["id"], "image", file)
-    await db.massagistas.update_one({"id": m["id"]}, {"$set": {"video_thumb": f["url"]}})
-    fresh = await db.massagistas.find_one({"id": m["id"]}, {"_id": 0})
+    await pool.execute("UPDATE massagistas SET video_thumb = $1 WHERE id = $2", f["url"], m["id"])
+    fresh = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1", m["id"])))
     return {"url": f["url"], "massagista": fresh}
 
 
@@ -1519,7 +1512,9 @@ async def track_view(mid: str, request: Request):
         session_token=request.cookies.get("session_token"),
         authorization=request.headers.get("authorization"),
     )
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0, "id": 1, "owner_user_id": 1})
+    m = _row(await pool.fetchrow(
+        "SELECT id, owner_user_id FROM massagistas WHERE id = $1 AND is_deleted = false", mid
+    ))
     if not m:
         return {"ok": False}
     # Skip owner self-views
@@ -1528,13 +1523,10 @@ async def track_view(mid: str, request: Request):
     ua = (request.headers.get("user-agent") or "")[:300]
     if any(k in ua.lower() for k in ("bot", "crawl", "spider", "preview")):
         return {"ok": True, "skipped": "bot"}
-    await db.profile_views.insert_one({
-        "id": f"pv_{uuid.uuid4().hex[:10]}",
-        "massagista_id": mid,
-        "user_id": user["user_id"] if user else None,
-        "user_agent": ua,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    await pool.execute(
+        "INSERT INTO profile_views (id, massagista_id, user_id, user_agent) VALUES ($1,$2,$3,$4)",
+        f"pv_{uuid.uuid4().hex[:10]}", mid, user["user_id"] if user else None, ua,
+    )
     return {"ok": True}
 
 
@@ -1549,36 +1541,43 @@ async def my_stats(request: Request):
     )
     if not user:
         raise HTTPException(401, "Faça login")
-    m = await db.massagistas.find_one({"owner_user_id": user["user_id"]}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow(
+        "SELECT * FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )))
     if not m:
         raise HTTPException(404, "Crie seu perfil primeiro")
     mid = m["id"]
-    now = datetime.now(timezone.utc)
-    cutoff_30 = (now - timedelta(days=30)).isoformat()
+    cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
 
     # Views
-    views_total = await db.profile_views.count_documents({"massagista_id": mid})
-    views_30d = await db.profile_views.count_documents({"massagista_id": mid, "created_at": {"$gte": cutoff_30}})
+    views_total = await pool.fetchval("SELECT count(*) FROM profile_views WHERE massagista_id = $1", mid)
+    views_30d = await pool.fetchval(
+        "SELECT count(*) FROM profile_views WHERE massagista_id = $1 AND created_at >= $2", mid, cutoff_30
+    )
 
     # WhatsApp clicks
-    wa_total = await db.whatsapp_clicks.count_documents({"massagista_id": mid})
-    wa_30d = await db.whatsapp_clicks.count_documents({"massagista_id": mid, "created_at": {"$gte": cutoff_30}})
+    wa_total = await pool.fetchval("SELECT count(*) FROM whatsapp_clicks WHERE massagista_id = $1", mid)
+    wa_30d = await pool.fetchval(
+        "SELECT count(*) FROM whatsapp_clicks WHERE massagista_id = $1 AND created_at >= $2", mid, cutoff_30
+    )
 
     # Bookings by status
-    pipeline = [
-        {"$match": {"massagista_id": mid}},
-        {"$group": {"_id": "$status", "count": {"$sum": 1}, "revenue": {"$sum": "$amount"}}},
-    ]
-    raw = await db.bookings.aggregate(pipeline).to_list(50)
-    by_status = {r["_id"]: {"count": int(r["count"]), "revenue": float(r.get("revenue", 0) or 0)} for r in raw}
+    status_rows = await pool.fetch(
+        "SELECT status, count(*) AS count, sum(amount) AS revenue FROM bookings WHERE massagista_id = $1 GROUP BY status",
+        mid,
+    )
+    by_status = {r["status"]: {"count": int(r["count"]), "revenue": float(r["revenue"] or 0)} for r in status_rows}
     confirmed_count = by_status.get("confirmed", {}).get("count", 0) + by_status.get("completed", {}).get("count", 0)
     revenue_confirmed = by_status.get("confirmed", {}).get("revenue", 0) + by_status.get("completed", {}).get("revenue", 0)
 
     # Recent bookings (10 last)
-    recent = await db.bookings.find(
-        {"massagista_id": mid},
-        {"_id": 0, "id": 1, "user_email": 1, "date": 1, "time": 1, "duration": 1, "amount": 1, "status": 1, "created_at": 1},
-    ).sort("created_at", -1).to_list(10)
+    recent = _rows(await pool.fetch(
+        """
+        SELECT id, user_email, date, time, duration, amount, status, created_at
+        FROM bookings WHERE massagista_id = $1 ORDER BY created_at DESC LIMIT 10
+        """,
+        mid,
+    ))
 
     # Conversion (confirmed / views)
     conversion = round((confirmed_count / views_total) * 100, 1) if views_total > 0 else None
@@ -1628,7 +1627,7 @@ async def og_share(mid: str, request: Request, foto: Optional[int] = None):
     Crawlers (WhatsApp, Telegram, Facebook, X) see the OG tags; real users get redirected."""
     import html as html_lib
     import json as _json
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", mid)))
     if not m:
         raise HTTPException(404, "Profissional não encontrada")
 
@@ -1689,7 +1688,7 @@ async def og_share(mid: str, request: Request, foto: Optional[int] = None):
 # ---------------------------------------------------------------------------
 @api.get("/massagistas/{mid}/promo-card.png")
 async def promo_card(mid: str, request: Request):
-    m = await db.massagistas.find_one({"id": mid}, {"_id": 0})
+    m = _massagista_out(_row(await pool.fetchrow("SELECT * FROM massagistas WHERE id = $1 AND is_deleted = false", mid)))
     if not m:
         raise HTTPException(404, "Profissional não encontrada")
     base = str(request.base_url).rstrip("/")
@@ -1730,11 +1729,13 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    global pool
+    # min/max_size baixos de propósito — RAM é escassa na VPS (ver .ai/docs/DEPLOY.md)
+    pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
     init_storage()
     await seed_massagistas()
-    await migrate_massagistas()
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    client.close()
+    await pool.close()

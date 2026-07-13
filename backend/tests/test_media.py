@@ -5,7 +5,7 @@ import pytest
 import requests
 from PIL import Image
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://stupefied-gauss-5.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "test_admin_token_1781314522749")
 NONADMIN_TOKEN = os.environ.get("NONADMIN_TOKEN", "test_nonadmin_token_1781314522758")
 

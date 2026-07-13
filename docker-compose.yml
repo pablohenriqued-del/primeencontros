@@ -1,0 +1,62 @@
+# Stack de deploy do Prime Encontros — VPS compartilhada com o anuncifacil e
+# o noxsystems_npm (ambiente "noxsv3", gerenciado via Portainer).
+#
+# RAM total da máquina: 3,8GB. Os mem_limit abaixo são intencionais — ver
+# .ai/docs/DEPLOY.md pro racional completo antes de mexer neles.
+#
+# Banco: migrado de MongoDB (container próprio) pra Postgres compartilhado —
+# reaproveita o container `noxsystems_postgres-db` que já roda nesta VPS
+# (usado pelo anuncifacil), num banco e usuário PRÓPRIOS do primeencontros
+# (não reaproveita o schema do anuncifacil). Ver seção "Antes do primeiro
+# deploy" no DEPLOY.md pra criar esse usuário/banco antes de subir o stack.
+#
+# Rede: nenhum serviço publica porta no host. O backend precisa estar na
+# MESMA rede Docker externa do `noxsystems_postgres-db` (pra falar com o
+# Postgres) e da `noxsystems_npm` (pra ser alcançado pelo reverse proxy) —
+# troque NOME_DA_REDE_DO_NPM e NOME_DA_REDE_DO_POSTGRES abaixo pelos nomes
+# reais (comando pra descobrir no DEPLOY.md). Podem ser a mesma rede, se
+# noxsystems_npm e noxsystems_postgres-db já compartilharem uma.
+
+services:
+  backend-app-prod:
+    build:
+      context: ./backend
+    container_name: primeencontros_backend-app-prod
+    env_file:
+      - ./backend/.env
+    # Aplica migrations pendentes (idempotente — pula o que já rodou) antes
+    # de subir o servidor, toda vez que o container inicia.
+    command: >
+      sh -c "python3 -m migrations.run_migrations && uvicorn server:app --host 0.0.0.0 --port 8001 --workers 1"
+    mem_limit: 400m
+    networks:
+      - postgres_network
+      - npm_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  frontend-nginx-prod:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL}
+    container_name: primeencontros_frontend-nginx-prod
+    mem_limit: 100m
+    depends_on:
+      - backend-app-prod
+    networks:
+      - npm_network
+    restart: unless-stopped
+
+networks:
+  postgres_network:
+    external: true
+    name: NOME_DA_REDE_DO_POSTGRES
+  npm_network:
+    external: true
+    name: NOME_DA_REDE_DO_NPM

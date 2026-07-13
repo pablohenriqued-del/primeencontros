@@ -9,22 +9,12 @@ import uuid
 import pytest
 import requests
 from datetime import datetime, timezone, timedelta
-from pymongo import MongoClient
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://stupefied-gauss-5.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "test_admin_token_1781314522749")
 NONADMIN_TOKEN = os.environ.get("NONADMIN_TOKEN", "test_nonadmin_token_1781314522758")
 
-MONGO_URL = "mongodb://localhost:27017"
-DB_NAME = "test_database"
-
-
-# --- Mongo helpers (test-only) ----------------------------------------------
-@pytest.fixture(scope="module")
-def mongo():
-    cli = MongoClient(MONGO_URL)
-    yield cli[DB_NAME]
-    cli.close()
+# Fixture "mongo" vem de conftest.py (shim sobre Postgres — nome mantido de propósito, ver conftest.py)
 
 
 @pytest.fixture(scope="module")
@@ -77,7 +67,8 @@ class TestReviews:
         assert r.status_code == 404
 
     def test_review_pending_booking_400(self, mongo, nonadmin_user):
-        mid = "m1"  # any seeded
+        # massagista_id precisa existir de verdade (FK no Postgres — não existia sob Mongo)
+        mid = mongo.massagistas.find_one({"id": {"$regex": "^m"}})["id"]
         bid = self._insert_booking(mongo, nonadmin_user["user_id"], mid, status="pending_payment")
         try:
             r = requests.post(f"{BASE_URL}/api/bookings/{bid}/review",
@@ -87,7 +78,7 @@ class TestReviews:
             mongo.bookings.delete_one({"id": bid})
 
     def test_review_rating_bounds_422(self, mongo, nonadmin_user):
-        mid = "m1"
+        mid = mongo.massagistas.find_one({"id": {"$regex": "^m"}})["id"]
         bid = self._insert_booking(mongo, nonadmin_user["user_id"], mid)
         try:
             r0 = requests.post(f"{BASE_URL}/api/bookings/{bid}/review",
@@ -136,12 +127,14 @@ class TestReviews:
             lst = rg.json()
             assert any(x["id"] == review_id for x in lst)
         finally:
-            mongo.bookings.delete_one({"id": bid})
+            # reviews antes de bookings — FK reviews.booking_id no Postgres
+            # (Mongo não enforcement isso, então a ordem antiga não importava)
             if review_id:
                 mongo.reviews.delete_one({"id": review_id})
                 # rollback aggregate
                 mongo.massagistas.update_one({"id": mid},
                                              {"$set": {"reviews": old_count, "rating": old_rating}})
+            mongo.bookings.delete_one({"id": bid})
 
 
 # ============================================================

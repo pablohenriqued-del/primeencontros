@@ -19,3 +19,16 @@ api.interceptors.request.use((config) => {
 export function brl(value) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value || 0);
 }
+
+// Resolve "/api/files/..." (caminho relativo salvo no banco) pra URL absoluta
+// do backend. Sem isso, um <img src="/api/files/...">  aponta pro domínio do
+// FRONTEND (onde a página está), não pro backend — quebra sempre que
+// frontend e backend estão em domínios diferentes (produção normalmente usa
+// subdomínios distintos, ex: app.primeencontros.com / api.primeencontros.com).
+// URLs absolutas (seed de demonstração, foto do Google) passam direto.
+export function resolveMediaUrl(u) {
+  if (!u) return u;
+  if (u.startsWith("http")) return u;
+  const root = API_BASE.replace(/\/api$/, "");
+  return `${root}${u}`;
+}

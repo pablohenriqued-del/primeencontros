@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, brl } from "@/lib/api";
+import { api, brl, resolveMediaUrl } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -202,7 +202,7 @@ export default function Home() {
               >
                 <div className="relative aspect-[4/5] overflow-hidden bg-zinc-900">
                   <img
-                    src={m.main_image}
+                    src={resolveMediaUrl(m.main_image)}
                     alt={m.name}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                   />

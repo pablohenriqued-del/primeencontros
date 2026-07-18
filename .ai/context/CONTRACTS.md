@@ -60,8 +60,8 @@ manual_confirmed_by?, manual_confirmed_at?, created_at (ISO string)
 ## 7. Tabelas Postgres (nomes fixos, não renomear)
 `users`, `user_sessions`, `massagistas`, `bookings`, `payment_transactions`, `reviews`, `whatsapp_clicks`, `profile_views`, `files`. Schema completo em `backend/migrations/0001_initial_schema.sql`.
 
-## 8. Object Storage externo
-Arquivos de mídia (fotos/vídeo) não ficam no Mongo nem em disco local — o backend faz `PUT` pra `https://integrations.emergentagent.com/objstore/api/v1/storage/objects/{path}` (ver `put_object()`, `backend/server.py:75`) autenticado com `EMERGENT_LLM_KEY`. A URL pública devolvida por esse serviço é o que fica salvo em `main_image`/`gallery`/`video_url`. Trocar esse storage por outro (S3 próprio, etc.) é uma migração grande, não uma refatoração pontual — exige reescrever `init_storage()`, `put_object()` e possivelmente migrar URLs já salvas no banco.
+## 8. Object Storage — disco local (migrado em 2026-07-18)
+Arquivos de mídia (fotos/vídeo) ficam em disco local, dentro de `STORAGE_DIR` (env, default `/data/uploads`) — ver `put_object()`/`get_object()` em `backend/server.py`. Precisa ser um **volume Docker nomeado** (`uploads_data`, já configurado em `docker-compose.yml`), senão o conteúdo some a cada recriação do container. `_storage_full_path()` resolve o path e rejeita qualquer tentativa de escapar `STORAGE_DIR` (defesa em profundidade — `storage_path` sempre é gerado com `uuid4` internamente, nunca vem de input direto do usuário). Substitui a dependência anterior do Object Storage da Emergent (`EMERGENT_LLM_KEY`) — ver item 10 (histórico).
 
 ## 9. Pacote de pagamento (migrado em 2026-07-12)
 Stripe é acessado via **SDK oficial `stripe`** (PyPI, `stripe>=15.3.0`), usando os métodos assíncronos nativos (`stripe.checkout.Session.create_async`, `.retrieve_async`, `stripe.Webhook.construct_event`). Não usa mais o wrapper `emergentintegrations.payments.stripe.checkout` — esse pacote foi removido do `requirements.txt` porque não está disponível no PyPI público (bloqueava deploy fora do ambiente Emergent).
@@ -72,8 +72,8 @@ Pontos que não podem quebrar:
 - `POST /api/webhook/stripe` agora valida a assinatura com `stripe.Webhook.construct_event(body, signature, STRIPE_WEBHOOK_SECRET)` — isso exige a variável de ambiente **`STRIPE_WEBHOOK_SECRET`** (novo requisito, não existia com o wrapper da Emergent). Sem ela configurada corretamente (o segredo gerado no dashboard do Stripe para o endpoint do webhook), toda chamada de webhook falha com 400.
 - O valor em reais salvo em `payment_transactions.amount` continua sendo a unidade decimal (ex: `150.0`), não centavos — só o que trafega com o Stripe (`unit_amount`, `amount_total`) é em centavos. Não confundir as duas unidades ao mexer nesse fluxo.
 
-## 10. Object Storage — ainda depende da Emergent (decisão consciente, não migrada)
-Upload de fotos/vídeo (`init_storage()`, `put_object()`, `EMERGENT_LLM_KEY`) **continua** chamando `https://integrations.emergentagent.com/objstore/...`. Isso foi mantido de propósito na migração de 2026-07-12 (decisão: trocar só o Stripe agora, Object Storage fica pra depois). Rodar o backend fora do ambiente Emergent (ex: VPS própria) ainda exige que esse domínio externo continue acessível e que `EMERGENT_LLM_KEY` continue válida — não é uma dependência resolvida, é uma dependência adiada. Ver pendência em `.ai/docs/EXECUTION_ORDER.md`.
+## 10. Object Storage — RESOLVIDO em 2026-07-18 (era dependência adiada da Emergent)
+Histórico: na migração de 2026-07-12 pra VPS Docker, o Object Storage da Emergent (`EMERGENT_LLM_KEY`) foi mantido de propósito ("decisão: trocar só o Stripe agora, Object Storage fica pra depois"). Isso causou upload de foto/vídeo quebrado em produção — a chave nunca foi validada fora do ambiente Emergent. Resolvido migrando pra disco local (ver item 8). `EMERGENT_LLM_KEY` foi removida do código e do `.env.example`.
 
 ## 11. Banco de dados — migrado de MongoDB pra PostgreSQL (2026-07-12)
 Migração completa (schema + queries + ETL de dados), documentada em detalhe — inventário, design aprovado e implementação. Pontos que não podem quebrar:

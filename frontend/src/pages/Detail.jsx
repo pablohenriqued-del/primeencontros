@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, useSearchParams, Link } from "react-router-dom";
-import { api, brl } from "@/lib/api";
+import { api, brl, resolveMediaUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
@@ -97,7 +97,7 @@ export default function Detail() {
 
   const priceFor = (d) => d === 60 ? m.price_60 : d === 90 ? m.price_90 : m.price_120;
 
-  const gallery = m.gallery || [];
+  const gallery = (m.gallery || []).map(resolveMediaUrl);
   const openLightbox = (i) => setLightboxIndex(i);
   const closeLightbox = () => setLightboxIndex(-1);
   const lightboxPrev = () => setLightboxIndex((i) => (i <= 0 ? gallery.length - 1 : i - 1));
@@ -131,7 +131,8 @@ export default function Detail() {
 
   // Video thumbnail with graceful fallback
   const hasVideo = !!m.video_url;
-  const videoThumb = m.video_thumb || m.main_image || m.gallery?.[0] || "";
+  const videoSrc = resolveMediaUrl(m.video_url);
+  const videoThumb = resolveMediaUrl(m.video_thumb || m.main_image) || gallery[0] || "";
 
   // WhatsApp helpers
   const hasWhatsApp = !!(m.ddd && m.phone);
@@ -459,7 +460,7 @@ export default function Detail() {
           <DialogHeader className="sr-only">
             <DialogTitle>Vídeo de {m.name}</DialogTitle>
           </DialogHeader>
-          <video src={m.video_url} controls autoPlay className="w-full h-auto" data-testid="profile-video" />
+          <video src={videoSrc} controls autoPlay className="w-full h-auto" data-testid="profile-video" />
         </DialogContent>
       </Dialog>
 

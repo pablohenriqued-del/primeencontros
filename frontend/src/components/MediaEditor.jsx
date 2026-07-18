@@ -1,30 +1,49 @@
 import { useEffect, useRef, useState } from "react";
-import { api, API_BASE } from "@/lib/api";
+import { api, resolveMediaUrl as resolveUrl } from "@/lib/api";
 import { extractVideoThumb } from "@/lib/videoThumb";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { Upload, Trash2, Star, Loader2, Image as ImageIcon, Video as VideoIcon, CheckCircle2, RefreshCw } from "lucide-react";
+import { Upload, Trash2, Star, Loader2, Image as ImageIcon, Video as VideoIcon, CheckCircle2, RefreshCw, FileText, ScanFace } from "lucide-react";
 import { toast } from "sonner";
-
-// resolves "/api/files/..." (relative) to absolute backend URL; passes through full URLs
-function resolveUrl(u) {
-  if (!u) return u;
-  if (u.startsWith("http")) return u;
-  const root = API_BASE.replace(/\/api$/, "");
-  return `${root}${u}`;
-}
 
 export default function MediaEditor({ open, massagista, onClose, onUpdated, owner = false }) {
   const [m, setM] = useState(massagista);
   const [tab, setTab] = useState("photos");
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [docs, setDocs] = useState({ id_document_front: null, id_document_back: null, selfie: null });
+  const [docsLoading, setDocsLoading] = useState(false);
   const photoInput = useRef(null);
   const videoInput = useRef(null);
 
   useEffect(() => { setM(massagista); }, [massagista]);
+
+  // Documentos de verificação só existem pro lado admin (owner=false) — a
+  // profissional já tem sua própria tela de envio em /sou-profissional.
+  useEffect(() => {
+    if (!open || owner || !massagista?.id) return;
+    let cancelled = false;
+    setDocs((prev) => {
+      Object.values(prev).forEach((d) => d?.url && URL.revokeObjectURL(d.url));
+      return { id_document_front: null, id_document_back: null, selfie: null };
+    });
+    setDocsLoading(true);
+    api.get(`/admin/massagistas/${massagista.id}/verification-documents`)
+      .then(async ({ data }) => {
+        const next = { id_document_front: null, id_document_back: null, selfie: null };
+        await Promise.all(data.map(async (d) => {
+          const res = await api.get(d.url, { responseType: "blob" });
+          next[d.kind] = { url: URL.createObjectURL(res.data), isPdf: res.data.type === "application/pdf" };
+        }));
+        if (!cancelled) setDocs(next);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setDocsLoading(false); });
+    return () => { cancelled = true; };
+    /* eslint-disable-next-line */
+  }, [open, owner, massagista?.id]);
 
   if (!m) return null;
 
@@ -154,6 +173,11 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated, owne
             <TabsTrigger value="video" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="media-tab-video">
               <VideoIcon className="h-4 w-4 mr-1.5" /> Vídeo
             </TabsTrigger>
+            {!owner && (
+              <TabsTrigger value="documents" className="rounded-full data-[state=active]:bg-red-600 data-[state=active]:text-white text-zinc-400" data-testid="media-tab-documents">
+                <FileText className="h-4 w-4 mr-1.5" /> Documentos
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="photos" className="mt-5">
@@ -262,6 +286,42 @@ export default function MediaEditor({ open, massagista, onClose, onUpdated, owne
               onChange={(e) => uploadFile(e.target.files?.[0], "video")}
             />
           </TabsContent>
+
+          {!owner && (
+            <TabsContent value="documents" className="mt-5">
+              <p className="text-xs text-zinc-500 mb-4">
+                Enviados pela profissional pra verificação de identidade — só leitura aqui, a aprovação continua no botão "Aprovar" da fila.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                  { kind: "id_document_front", label: "Frente do documento", icon: FileText, testid: "media-doc-id-document-front" },
+                  { kind: "id_document_back", label: "Verso do documento", icon: FileText, testid: "media-doc-id-document-back" },
+                  { kind: "selfie", label: "Selfie", icon: ScanFace, testid: "media-doc-selfie" },
+                ].map(({ kind, label, icon: Icon, testid }) => (
+                  <div key={kind}>
+                    <div className="relative rounded-xl border border-zinc-800 bg-black aspect-[3/4] flex items-center justify-center overflow-hidden">
+                      {docsLoading ? (
+                        <Loader2 className="h-5 w-5 animate-spin text-zinc-600" />
+                      ) : docs[kind]?.isPdf ? (
+                        <a href={docs[kind].url} target="_blank" rel="noreferrer" className="text-center text-red-300 px-2 hover:text-red-200" data-testid={testid}>
+                          <FileText className="h-7 w-7 mx-auto mb-1" />
+                          <span className="text-xs underline">Abrir PDF</span>
+                        </a>
+                      ) : docs[kind] ? (
+                        <img src={docs[kind].url} alt={label} className="w-full h-full object-cover" data-testid={testid} />
+                      ) : (
+                        <div className="text-center text-zinc-600 px-2">
+                          <Icon className="h-6 w-6 mx-auto mb-1" />
+                          <span className="text-xs">Não enviado{kind === "selfie" ? "a" : ""}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-zinc-500 text-center mt-1">{label}</div>
+                  </div>
+                ))}
+              </div>
+            </TabsContent>
+          )}
         </Tabs>
 
         {uploading && (

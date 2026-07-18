@@ -7,7 +7,6 @@ import io
 import uuid
 import math
 import logging
-import requests
 from datetime import datetime, timezone, timedelta, date, time as dtime
 from decimal import Decimal
 from pathlib import Path
@@ -87,84 +86,50 @@ def _massagista_out(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 stripe.api_key = STRIPE_API_KEY
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 EMERGENT_AUTH_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
 
 # ---------------------------------------------------------------------------
-# Object storage (Emergent)
+# Object storage (disco local — volume Docker, ver CONTRACTS.md #8)
 # ---------------------------------------------------------------------------
-STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 APP_NAME = "prime-encontros"
-_storage_key: Optional[str] = None
+STORAGE_DIR = Path(os.environ.get("STORAGE_DIR", "/data/uploads"))
 ALLOWED_IMAGE = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 ALLOWED_VIDEO = {"video/mp4", "video/quicktime", "video/webm"}
+# Documento de identidade aceita PDF além de imagem — cobre CNH Digital (o app
+# oficial exporta PDF) e digitalizações frente+verso num arquivo só (ver
+# migrations/0004). Selfie continua só imagem.
+ALLOWED_DOCUMENT = ALLOWED_IMAGE | {"application/pdf"}
 EXT_FOR = {
     "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp",
     "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm",
+    "application/pdf": "pdf",
 }
 
 
-def init_storage() -> Optional[str]:
-    global _storage_key
-    if _storage_key:
-        return _storage_key
-    if not EMERGENT_LLM_KEY:
-        logger.error("EMERGENT_LLM_KEY missing — storage disabled")
-        return None
-    try:
-        r = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
-        r.raise_for_status()
-        _storage_key = r.json()["storage_key"]
-        logger.info("Storage initialized")
-        return _storage_key
-    except Exception as e:
-        logger.exception("Storage init failed: %s", e)
-        return None
+def _storage_full_path(path: str) -> Path:
+    """Resolve path dentro de STORAGE_DIR, rejeitando qualquer tentativa de
+    escapar o diretório (defesa em profundidade — na prática `path` sempre
+    vem de storage_path gerado com uuid4, nunca de input direto do usuário)."""
+    base = STORAGE_DIR.resolve()
+    full = (base / path).resolve()
+    if full != base and base not in full.parents:
+        raise HTTPException(400, "Caminho inválido")
+    return full
 
 
 def put_object(path: str, data: bytes, content_type: str) -> Dict[str, Any]:
-    key = init_storage()
-    if not key:
-        raise HTTPException(500, "Object storage indisponível")
-    r = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data, timeout=120,
-    )
-    if r.status_code == 403:
-        global _storage_key
-        _storage_key = None
-        key = init_storage()
-        r = requests.put(
-            f"{STORAGE_URL}/objects/{path}",
-            headers={"X-Storage-Key": key, "Content-Type": content_type},
-            data=data, timeout=120,
-        )
-    r.raise_for_status()
-    return r.json()
+    full = _storage_full_path(path)
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_bytes(data)
+    return {"path": path, "size": len(data)}
 
 
 def get_object(path: str) -> tuple:
-    key = init_storage()
-    if not key:
-        raise HTTPException(500, "Object storage indisponível")
-    r = requests.get(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key}, timeout=60,
-    )
-    if r.status_code == 403:
-        global _storage_key
-        _storage_key = None
-        key = init_storage()
-        r = requests.get(
-            f"{STORAGE_URL}/objects/{path}",
-            headers={"X-Storage-Key": key}, timeout=60,
-        )
-    if r.status_code == 404:
+    full = _storage_full_path(path)
+    if not full.is_file():
         raise HTTPException(404, "Arquivo não encontrado")
-    r.raise_for_status()
-    return r.content, r.headers.get("Content-Type", "application/octet-stream")
+    return full.read_bytes(), "application/octet-stream"
 
 # ---------------------------------------------------------------------------
 # App
@@ -524,6 +489,43 @@ async def require_admin(request: Request) -> Dict[str, Any]:
     return user
 
 
+# ---------------------------------------------------------------------------
+# Admin (usuários / RBAC básico — só o booleano is_admin, ver CONTRACTS.md #6)
+# ---------------------------------------------------------------------------
+@api.get("/admin/users")
+async def admin_list_users(request: Request):
+    await require_admin(request)
+    rows = await pool.fetch(
+        "SELECT user_id, email, name, is_admin, created_at FROM users ORDER BY created_at"
+    )
+    return _rows(rows)
+
+
+@api.post("/admin/users/{user_id}/role")
+async def admin_set_user_role(user_id: str, request: Request, is_admin: bool = Body(..., embed=True)):
+    admin = await require_admin(request)
+    if user_id == admin["user_id"] and not is_admin:
+        raise HTTPException(400, "Você não pode remover seu próprio acesso de admin")
+    result = await pool.execute("UPDATE users SET is_admin = $1 WHERE user_id = $2", is_admin, user_id)
+    if result == "UPDATE 0":
+        raise HTTPException(404, "Usuário não encontrado")
+    return {"ok": True}
+
+
+@api.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, request: Request):
+    admin = await require_admin(request)
+    if user_id == admin["user_id"]:
+        raise HTTPException(400, "Você não pode apagar sua própria conta")
+    try:
+        result = await pool.execute("DELETE FROM users WHERE user_id = $1", user_id)
+    except asyncpg.ForeignKeyViolationError:
+        raise HTTPException(409, "Não é possível apagar: este usuário tem reservas, avaliações ou pagamentos registrados")
+    if result == "DELETE 0":
+        raise HTTPException(404, "Usuário não encontrado")
+    return {"ok": True}
+
+
 @api.get("/admin/verification/queue")
 async def verification_queue(request: Request):
     await require_admin(request)
@@ -571,6 +573,23 @@ async def _set_verification(mid: str, status: str, verified: bool, id_check: boo
 @api.post("/admin/verification/{mid}/approve")
 async def approve_verification(mid: str, payload: VerificationAction, request: Request):
     admin = await require_admin(request)
+    rows = await pool.fetch(
+        "SELECT kind, content_type FROM verification_documents WHERE massagista_id = $1", mid
+    )
+    by_kind = {r["kind"]: r["content_type"] for r in rows}
+    # Duas formas válidas de mandar o documento: (1) frente + verso, as duas
+    # como imagem; (2) um PDF só na frente (cobre CNH Digital e digitalização
+    # de frente+verso num arquivo — ver migrations/0004). Selfie é sempre
+    # obrigatória nos dois casos.
+    missing = set()
+    if "selfie" not in by_kind:
+        missing.add("selfie")
+    if "id_document_front" not in by_kind:
+        missing.add("id_document_front")
+    elif by_kind["id_document_front"] != "application/pdf" and "id_document_back" not in by_kind:
+        missing.add("id_document_back")
+    if missing:
+        raise HTTPException(400, f"Faltam documentos obrigatórios: {', '.join(sorted(missing))}")
     verification = await _set_verification(
         mid, "verified", True, payload.id_check, payload.photo_check, payload.address_check,
         datetime.now(timezone.utc), admin["email"], payload.notes,
@@ -581,6 +600,8 @@ async def approve_verification(mid: str, payload: VerificationAction, request: R
 @api.post("/admin/verification/{mid}/reject")
 async def reject_verification(mid: str, payload: VerificationAction, request: Request):
     admin = await require_admin(request)
+    if not (payload.notes or "").strip():
+        raise HTTPException(400, "Informe o motivo da rejeição — a profissional vai ver essa mensagem")
     verification = await _set_verification(
         mid, "rejected", False, payload.id_check, payload.photo_check, payload.address_check,
         datetime.now(timezone.utc), admin["email"], payload.notes,
@@ -648,6 +669,172 @@ async def _admin_upload(admin: Dict[str, Any], mid: str, kind: str, file: Upload
         "content_type": file.content_type, "size": size, "original_filename": file.filename,
         "uploaded_by": admin["email"], "url": _public_file_url(result["path"]),
     }
+
+
+# ---------------------------------------------------------------------------
+# Documentos de verificação (documento de identidade + selfie)
+# ---------------------------------------------------------------------------
+# Aprovação é manual (admin compara as duas fotos no painel) — sem
+# verificação facial automática por decisão consciente, ver migrations/0003.
+# Arquivos NÃO passam por _public_file_url/`/api/files` (público) — só saem
+# por /admin/verification-documents/{id}/file, atrás de require_admin.
+async def _upload_verification_document(mid: str, kind: str, file: UploadFile) -> Dict[str, Any]:
+    if kind == "selfie":
+        if file.content_type not in ALLOWED_IMAGE:
+            raise HTTPException(400, "Formato de imagem não suportado (use JPG, PNG ou WEBP)")
+    elif file.content_type not in ALLOWED_DOCUMENT:
+        raise HTTPException(400, "Formato não suportado (use JPG, PNG, WEBP ou PDF)")
+    ext = EXT_FOR.get(file.content_type, "bin")
+    storage_path = f"{APP_NAME}/verification/{mid}/{kind}_{uuid.uuid4().hex}.{ext}"
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(413, "Arquivo excede o limite de 8MB")
+
+    old_path = await pool.fetchval(
+        "SELECT storage_path FROM verification_documents WHERE massagista_id = $1 AND kind = $2", mid, kind,
+    )
+    result = put_object(storage_path, data, file.content_type)
+    doc_id = f"vd_{uuid.uuid4().hex[:12]}"
+    row = _row(await pool.fetchrow(
+        """
+        INSERT INTO verification_documents (id, massagista_id, kind, storage_path, content_type, size)
+        VALUES ($1,$2,$3,$4,$5,$6)
+        ON CONFLICT (massagista_id, kind) DO UPDATE
+            SET id = $1, storage_path = $4, content_type = $5, size = $6, uploaded_at = now()
+        RETURNING id, kind, uploaded_at
+        """,
+        doc_id, mid, kind, result["path"], file.content_type, result.get("size", len(data)),
+    ))
+    if old_path:
+        _storage_full_path(old_path).unlink(missing_ok=True)
+    # Reenvio depois de rejeitada: sai do estado "rejeitado" e volta pra fila
+    # de análise — sem isso a profissional ficaria presa vendo "rejeitada" no
+    # próprio painel mesmo depois de corrigir e reenviar.
+    await pool.execute(
+        "UPDATE massagistas SET verification_status = 'pending' WHERE id = $1 AND verification_status = 'rejected'",
+        mid,
+    )
+    return row
+
+
+@api.post("/me/profile/verification/id-document-front")
+async def upload_my_id_document_front(request: Request, file: UploadFile = File(...)):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    mid = await pool.fetchval(
+        "SELECT id FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )
+    if not mid:
+        raise HTTPException(404, "Crie seu perfil profissional antes de enviar documentos")
+    return {"ok": True, "document": await _upload_verification_document(mid, "id_document_front", file)}
+
+
+@api.post("/me/profile/verification/id-document-back")
+async def upload_my_id_document_back(request: Request, file: UploadFile = File(...)):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    mid = await pool.fetchval(
+        "SELECT id FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )
+    if not mid:
+        raise HTTPException(404, "Crie seu perfil profissional antes de enviar documentos")
+    return {"ok": True, "document": await _upload_verification_document(mid, "id_document_back", file)}
+
+
+@api.post("/me/profile/verification/selfie")
+async def upload_my_selfie(request: Request, file: UploadFile = File(...)):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    mid = await pool.fetchval(
+        "SELECT id FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )
+    if not mid:
+        raise HTTPException(404, "Crie seu perfil profissional antes de enviar documentos")
+    return {"ok": True, "document": await _upload_verification_document(mid, "selfie", file)}
+
+
+@api.get("/me/profile/verification/status")
+async def my_verification_documents_status(request: Request):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    mid = await pool.fetchval(
+        "SELECT id FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )
+    if not mid:
+        return {"id_document_front": None, "id_document_back": None, "selfie": None}
+    rows = await pool.fetch(
+        "SELECT kind, uploaded_at FROM verification_documents WHERE massagista_id = $1", mid
+    )
+    by_kind = {r["kind"]: r["uploaded_at"].isoformat() for r in rows}
+    return {
+        "id_document_front": by_kind.get("id_document_front"),
+        "id_document_back": by_kind.get("id_document_back"),
+        "selfie": by_kind.get("selfie"),
+    }
+
+
+@api.get("/me/profile/verification/{kind}/file")
+async def my_verification_document_file(kind: str, request: Request):
+    user = await get_current_user(
+        session_token=request.cookies.get("session_token"),
+        authorization=request.headers.get("authorization"),
+    )
+    if not user:
+        raise HTTPException(401, "Faça login")
+    if kind not in ("id_document_front", "id_document_back", "selfie"):
+        raise HTTPException(400, "Tipo inválido")
+    mid = await pool.fetchval(
+        "SELECT id FROM massagistas WHERE owner_user_id = $1 AND is_deleted = false", user["user_id"]
+    )
+    if not mid:
+        raise HTTPException(404, "Perfil não encontrado")
+    record = _row(await pool.fetchrow(
+        "SELECT * FROM verification_documents WHERE massagista_id = $1 AND kind = $2", mid, kind
+    ))
+    if not record:
+        raise HTTPException(404, "Documento não encontrado")
+    data, content_type = get_object(record["storage_path"])
+    return Response(content=data, media_type=record.get("content_type") or content_type)
+
+
+@api.get("/admin/massagistas/{mid}/verification-documents")
+async def admin_list_verification_documents(mid: str, request: Request):
+    await require_admin(request)
+    rows = await pool.fetch(
+        "SELECT id, kind, content_type, uploaded_at FROM verification_documents WHERE massagista_id = $1", mid
+    )
+    return [
+        {**_row(r), "url": f"/admin/verification-documents/{r['id']}/file"}
+        for r in rows
+    ]
+
+
+@api.get("/admin/verification-documents/{doc_id}/file")
+async def admin_get_verification_document_file(doc_id: str, request: Request):
+    await require_admin(request)
+    record = _row(await pool.fetchrow(
+        "SELECT * FROM verification_documents WHERE id = $1", doc_id
+    ))
+    if not record:
+        raise HTTPException(404, "Documento não encontrado")
+    data, content_type = get_object(record["storage_path"])
+    return Response(content=data, media_type=record.get("content_type") or content_type)
 
 
 @api.put("/admin/massagistas/{mid}")
@@ -1732,7 +1919,7 @@ async def startup():
     global pool
     # min/max_size baixos de propósito — RAM é escassa na VPS (ver .ai/docs/DEPLOY.md)
     pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-    init_storage()
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     await seed_massagistas()
 
 

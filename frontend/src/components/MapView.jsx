@@ -1,7 +1,7 @@
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import { Link } from "react-router-dom";
-import { brl } from "@/lib/api";
+import { brl, resolveMediaUrl as resolveUrl } from "@/lib/api";
 import { Star, ShieldCheck } from "lucide-react";
 
 // Custom red pin
@@ -12,13 +12,6 @@ function makeIcon(label = "", verified = false) {
     iconSize: [28, 28],
     iconAnchor: [14, 14],
   });
-}
-
-function resolveUrl(u) {
-  if (!u) return u;
-  if (u.startsWith("http")) return u;
-  const root = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
-  return `${root}${u}`;
 }
 
 export default function MapView({ items, center = [-22.9711, -43.1822], zoom = 12 }) {

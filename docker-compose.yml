@@ -29,6 +29,8 @@ services:
     command: >
       sh -c "python3 -m migrations.run_migrations && uvicorn server:app --host 0.0.0.0 --port 8001 --workers 1"
     mem_limit: 400m
+    volumes:
+      - uploads_data:/data/uploads
     networks:
       - postgres_network
       - npm_network
@@ -52,6 +54,12 @@ services:
     networks:
       - npm_network
     restart: unless-stopped
+
+volumes:
+  # Fotos/vídeos das massagistas (disco local — ver CONTRACTS.md #8). Sem
+  # esse volume nomeado, um `docker compose up` que recria o container perde
+  # todo o conteúdo enviado até então.
+  uploads_data:
 
 networks:
   postgres_network:

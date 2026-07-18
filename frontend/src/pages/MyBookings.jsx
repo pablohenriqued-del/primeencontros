@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, brl } from "@/lib/api";
+import { api, brl, resolveMediaUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -86,7 +86,7 @@ export default function MyBookings() {
             return (
               <div key={b.id} data-testid={`booking-${b.id}`} className="bg-zinc-950 rounded-2xl border border-zinc-900 p-4 sm:p-5 flex flex-col sm:flex-row items-start gap-4 hover:border-red-600/30 transition-colors">
                 <Link to={`/massagista/${b.massagista_id}`} className="shrink-0">
-                  <img src={b.massagista_image} alt={b.massagista_name} className="h-20 w-20 sm:h-24 sm:w-24 rounded-xl object-cover" />
+                  <img src={resolveMediaUrl(b.massagista_image)} alt={b.massagista_name} className="h-20 w-20 sm:h-24 sm:w-24 rounded-xl object-cover" />
                 </Link>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
